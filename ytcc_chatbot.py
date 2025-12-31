@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from uuid import uuid4
 import io
+import threading
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -82,7 +83,7 @@ st.markdown(
       padding-bottom: 5rem;
   }
   [data-testid="stSidebarContent"] {
-      padding-top: 1.5rem;
+      padding-top: 0.9rem;
   }
   header {visibility: hidden;}
   footer {visibility: hidden;}
@@ -140,6 +141,38 @@ st.markdown(
       color: #0041A3 !important;
       border: 1px solid #c2d8f8 !important;
   }
+  /* 저장 버튼 스타일 (새 채팅과 색상 구분) */
+  .save-chat-btn button {
+      background-color: #eafaf1;
+      color: #127a3a !important;
+      border: 1px solid #cdeedb !important;
+  }
+  .save-chat-btn button:hover {
+      background-color: #d6f3e4;
+      color: #0f6a32 !important;
+      border: 1px solid #bfe8d3 !important;
+  }
+
+  /* 로그아웃: 텍스트 링크처럼 */
+  .logout-link .stButton button {
+      background: transparent !important;
+      border: none !important;
+      color: #6b7280 !important;
+      padding: 0 !important;
+      font-size: 12px !important;
+      font-weight: 500 !important;
+      text-decoration: underline;
+  }
+  .logout-link .stButton button:hover {
+      color: #374151 !important;
+  }
+
+  /* 버튼 간격 타이트하게 */
+  .tight-btn .stButton button {
+      margin-top: 0.0rem !important;
+      margin-bottom: 0.35rem !important;
+  }
+
 </style>
 """,
     unsafe_allow_html=True
@@ -157,6 +190,45 @@ GEMINI_MAX_TOKENS = 8192
 MAX_TOTAL_COMMENTS   = 120_000
 MAX_COMMENTS_PER_VID = 4_000
 CACHE_TTL_MINUTES    = 20  # [추가] 캐시 수명 (분)
+
+# [추가] Gemini 동시 호출(In-flight) 제한
+MAX_GEMINI_INFLIGHT = max(1, int(st.secrets.get("MAX_GEMINI_INFLIGHT", 3) or 3))
+GEMINI_INFLIGHT_WAIT_SEC = int(st.secrets.get("GEMINI_INFLIGHT_WAIT_SEC", 120) or 120)
+
+# 프로세스 전역 세마포어 (동시 Gemini 호출 제한)
+_GEMINI_SEM = threading.BoundedSemaphore(MAX_GEMINI_INFLIGHT)
+_GEMINI_TLOCAL = threading.local()
+
+class GeminiInflightSlot:
+    """Gemini API 호출 동시성 제한.
+
+    - 동일 스레드에서 중첩 호출(캐시 -> 폴백 등) 시 데드락 방지.
+    - 슬롯이 없으면 최대 GEMINI_INFLIGHT_WAIT_SEC 동안 대기.
+    """
+    def __init__(self, wait_sec: int = None):
+        self.wait_sec = GEMINI_INFLIGHT_WAIT_SEC if wait_sec is None else int(wait_sec)
+        self.acquired = False
+
+    def __enter__(self):
+        if getattr(_GEMINI_TLOCAL, "held", False):
+            # 재진입: 이미 슬롯 보유 (중첩 호출 데드락 방지)
+            return self
+
+        deadline = time.time() + max(0, self.wait_sec)
+        while True:
+            if _GEMINI_SEM.acquire(timeout=0.2):
+                self.acquired = True
+                _GEMINI_TLOCAL.held = True
+                return self
+            if time.time() >= deadline:
+                raise TimeoutError("GEMINI_INFLIGHT_TIMEOUT")
+
+    def __exit__(self, exc_type, exc, tb):
+        if self.acquired:
+            _GEMINI_TLOCAL.held = False
+            _GEMINI_SEM.release()
+        return False
+
 
 def ensure_state():
     defaults = {
@@ -548,14 +620,45 @@ def github_rename_session(user_id: str, old_name: str, new_name: str, token):
 
     github_delete_folder(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{old_name}", token)
 
+def _session_base_keyword() -> str:
+    schema = st.session_state.get("last_schema", {}) or {}
+    kw = (schema.get("keywords") or ["세션"])[0]
+    kw = (kw or "").strip()
+    # 한글/영문/숫자만 남기고(공백 제거), 너무 길면 컷
+    base = re.sub(r"[^0-9A-Za-z가-힣]", "", kw)
+    base = base[:12] if base else "세션"
+    return base
+
+def _next_session_number(user_id: str, base: str) -> int:
+    """같은 키워드(base)로 저장된 세션이 있으면 뒤 숫자를 증가."""
+    try:
+        if not all([GITHUB_TOKEN, GITHUB_REPO]):
+            return 1
+        sessions = github_list_dir(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}", GITHUB_TOKEN) or []
+    except Exception:
+        sessions = []
+
+    pat = re.compile(rf"^{re.escape(base)}(\d+)$")
+    max_n = 0
+    for s in sessions:
+        m = pat.match(str(s))
+        if m:
+            try:
+                max_n = max(max_n, int(m.group(1)))
+            except Exception:
+                pass
+    return max_n + 1 if max_n > 0 else 1
+
 def _build_session_name() -> str:
+    # 이미 불러온 세션이면 같은 이름 유지
     if st.session_state.get("loaded_session_name"):
         return st.session_state.loaded_session_name
 
-    schema = st.session_state.get("last_schema", {})
-    kw = (schema.get("keywords", ["NoKeyword"]))[0]
-    kw_slug = re.sub(r'[^\w-]', '', kw.replace(' ', '_'))[:20]
-    return f"{kw_slug}_{now_kst().strftime('%Y-%m-%d_%H%M')}"
+    user_id = st.session_state.get('auth_user_id') or 'public'
+    base = _session_base_keyword()
+    n = _next_session_number(user_id, base)
+    return f"{base}{n}"
+
 
 def save_current_session_to_github():
     if not all([GITHUB_REPO, GITHUB_TOKEN, st.session_state.chat, st.session_state.last_csv]):
@@ -607,7 +710,13 @@ def load_session_from_github(sess_name: str):
                 st.error("세션 핵심 파일을 불러오는 데 실패했습니다.")
                 return
 
+            # 로그인 정보는 유지 (세션 로드 시 재로그인 방지)
+            keep_keys = {k: st.session_state.get(k) for k in [
+                "auth_ok","auth_user_id","auth_role","auth_display_name","client_instance_id","_auth_users_cache"
+            ] if k in st.session_state}
+
             st.session_state.clear()
+            st.session_state.update({k:v for k,v in keep_keys.items() if v is not None})
             ensure_state()
 
             with open(os.path.join(local_dir, "qa.json"), "r", encoding="utf-8") as f:
@@ -832,11 +941,12 @@ def call_gemini_rotating(model_name, keys, system_instruction, user_payload,
                 generation_config={"temperature": 0.2, "max_output_tokens": max_tokens},
                 system_instruction=real_sys_inst 
             )
-            resp = model.generate_content(
-                user_payload,
-                request_options={"timeout": timeout_s},
-                safety_settings=safety_settings 
-            )
+            with GeminiInflightSlot():
+                resp = model.generate_content(
+                    user_payload,
+                    request_options={"timeout": timeout_s},
+                    safety_settings=safety_settings 
+                )
             
             if not resp: return "⚠️ AI 응답 없음"
             try:
@@ -850,6 +960,8 @@ def call_gemini_rotating(model_name, keys, system_instruction, user_payload,
             return "⚠️ [시스템] 내용 과다 또는 차단으로 답변 생성 실패"
 
         except Exception as e:
+            if isinstance(e, TimeoutError) or "GEMINI_INFLIGHT_TIMEOUT" in str(e):
+                return "⚠️ 현재 요청이 많아 AI 분석 대기열이 꽉 찼습니다. 잠시 후 다시 시도해주세요."
             msg = str(e).lower()
             if "429" in msg or "quota" in msg:
                 if len(rk.keys) > 1:
@@ -891,7 +1003,8 @@ def call_gemini_smart_cache(model_name, keys, system_instruction, user_query,
         try:
             active_cache = caching.CachedContent.get(cache_name)
             # 수명 연장 (+20분)
-            active_cache.update(ttl=timedelta(minutes=CACHE_TTL_MINUTES))
+            with GeminiInflightSlot():
+                active_cache.update(ttl=timedelta(minutes=CACHE_TTL_MINUTES))
             
             final_model = genai.GenerativeModel.from_cached_content(
                 cached_content=active_cache,
@@ -917,13 +1030,14 @@ def call_gemini_smart_cache(model_name, keys, system_instruction, user_query,
             current_key = rk.current()
             genai.configure(api_key=current_key)
             try:
-                active_cache = caching.CachedContent.create(
-                    model=model_name,
-                    display_name=f"ytcc_{uuid4().hex[:8]}",
-                    system_instruction=system_instruction,
-                    contents=[large_context_text],
-                    ttl=timedelta(minutes=CACHE_TTL_MINUTES)
-                )
+                with GeminiInflightSlot():
+                    active_cache = caching.CachedContent.create(
+                        model=model_name,
+                        display_name=f"ytcc_{uuid4().hex[:8]}",
+                        system_instruction=system_instruction,
+                        contents=[large_context_text],
+                        ttl=timedelta(minutes=CACHE_TTL_MINUTES)
+                    )
                 
                 st.session_state[cache_key_in_session] = {
                     "name": active_cache.name,
@@ -951,7 +1065,8 @@ def call_gemini_smart_cache(model_name, keys, system_instruction, user_query,
     # [Execution]
     try:
         if final_model:
-            resp = final_model.generate_content(user_query, safety_settings=safety_settings)
+            with GeminiInflightSlot():
+                resp = final_model.generate_content(user_query, safety_settings=safety_settings)
         else:
             # 캐싱 실패/미사용 시 일반 호출 (Fallback)
             full_payload = f"{system_instruction}\n\n{large_context_text or ''}\n\n{user_query}"
@@ -960,6 +1075,8 @@ def call_gemini_smart_cache(model_name, keys, system_instruction, user_query,
         if resp and resp.text: return resp.text
         return "⚠️ [시스템] AI 응답 없음 (빈 내용)"
     except Exception as e:
+        if isinstance(e, TimeoutError) or "GEMINI_INFLIGHT_TIMEOUT" in str(e):
+            return "⚠️ 현재 요청이 많아 AI 분석 대기열이 꽉 찼습니다. 잠시 후 다시 시도해주세요."
         return f"⚠️ [시스템] 처리 중 에러: {e}"
 
 def yt_search_videos(rt, keyword, max_results, order="viewCount",
@@ -1403,23 +1520,26 @@ def run_followup_turn(user_query: str):
 require_auth()
 
 with st.sidebar:
-    st.markdown('<h2 style="font-weight:600; font-size:1.6rem; margin-bottom:1.5rem; background:-webkit-linear-gradient(45deg, #4285F4, #9B72CB, #D96570, #F2A60C); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">💬 유튜브 댓글분석: AI 챗봇</h2>', unsafe_allow_html=True)
-    st.caption("문의: 미디어)디지털마케팅 데이터파트")
+    st.markdown('<h2 style="font-weight:600; font-size:1.6rem; margin-bottom:1.0rem; background:-webkit-linear-gradient(45deg, #4285F4, #9B72CB, #D96570, #F2A60C); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">💬 유튜브 댓글분석: AI 챗봇</h2>', unsafe_allow_html=True)
 
     # --- Auth info ---
     if st.session_state.get("auth_user_id"):
-        st.markdown(f"**👤 {st.session_state.get('auth_display_name', st.session_state.get('auth_user_id'))}** (`{st.session_state.get('auth_user_id')}`)")
-        if st.button("🚪 로그아웃", use_container_width=True):
-            # Keep caches minimal; full logout
+        disp = st.session_state.get("auth_display_name", st.session_state.get("auth_user_id"))
+        uid  = st.session_state.get("auth_user_id")
+        st.markdown(f"**👤 {disp}**  \n`{uid}`")
+
+        st.markdown('<div class="logout-link">', unsafe_allow_html=True)
+        if st.button("로그아웃", key="logout_btn"):
             st.session_state.clear()
             ensure_state()
             st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
     st.markdown("""<style>[data-testid="stSidebarUserContent"] {display: flex; flex-direction: column; height: calc(100vh - 4rem);} .sidebar-top-section { flex-grow: 1; overflow-y: auto; } .sidebar-bottom-section { flex-shrink: 0; }</style>""", unsafe_allow_html=True)
 
     st.markdown('<div class="sidebar-top-section">', unsafe_allow_html=True)
-    st.markdown('<div class="new-chat-btn">', unsafe_allow_html=True)
+    st.markdown('<div class="new-chat-btn tight-btn">', unsafe_allow_html=True)
     if st.button("✨ 새 채팅", use_container_width=True):
         keep_keys = {k: st.session_state.get(k) for k in ["auth_ok","auth_user_id","auth_role","auth_display_name","client_instance_id","_auth_users_cache"] if k in st.session_state}
         st.session_state.clear()
@@ -1429,6 +1549,7 @@ with st.sidebar:
     st.markdown('</div>', unsafe_allow_html=True)
 
     if st.session_state.chat and st.session_state.last_csv:
+        st.markdown('<div class="save-chat-btn tight-btn">', unsafe_allow_html=True)
         if st.button("💾 현재 대화 저장", use_container_width=True):
             with st.spinner("세션 저장 중..."):
                 success, result = save_current_session_to_github()
@@ -1437,6 +1558,7 @@ with st.sidebar:
                 time.sleep(2)
                 st.rerun()
             else: st.error(result)
+        st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown("#### 대화 기록")
