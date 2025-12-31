@@ -1622,6 +1622,150 @@ def scroll_to_bottom():
         height=0
     )
 
+def render_capture_pdf_button(file_basename: str, label: str = "PDF저장"):
+    # 대화창(채팅 메시지 영역)만 "스크린샷 기반"으로 PDF 저장
+    # - reportlab 폰트/한글 깨짐 문제를 회피
+    # - 스크롤 끝까지(전체 메시지) 포함
+
+    # 파일명 안전화
+    safe = re.sub(r'[\\/:*?"<>|]+', "_", (file_basename or "chat")).strip()
+    safe = re.sub(r"\s+", "_", safe) or "chat"
+
+    # Streamlit rerun마다 id가 바뀌도록 (DOM 충돌 방지)
+    btn_id = f"ytcc_cap_pdf_{uuid4().hex[:8]}"
+
+    st_html(
+        f"""
+        <div style="width:100%;">
+          <button id="{btn_id}" class="ytcc-cap-pdf-btn" style="width:100%; padding:0.60rem 0.6rem; border-radius:12px; border:1px solid #e5e7eb; background:#ffffff; cursor:pointer; font-size:14px; font-weight:600;">
+            {label}
+          </button>
+        </div>
+
+        <script>
+        (function() {{
+          const btn = document.getElementById("{btn_id}");
+          if (!btn) return;
+
+          const PARENT = window.parent;
+          const DOC = PARENT.document;
+
+          // 부모 문서에 스크립트 로드 (한 번만)
+          function ensureScript(src, globalName) {{
+            return new Promise((resolve, reject) => {{
+              try {{
+                if (globalName && PARENT[globalName]) return resolve(true);
+                if (DOC.querySelector('script[data-ytcc-src="'+src+'"]')) return resolve(true);
+                const s = DOC.createElement('script');
+                s.src = src;
+                s.async = true;
+                s.setAttribute('data-ytcc-src', src);
+                s.onload = () => resolve(true);
+                s.onerror = () => reject(new Error('load failed: ' + src));
+                DOC.head.appendChild(s);
+              }} catch (e) {{
+                reject(e);
+              }}
+            }});
+          }}
+
+          async function captureToPdf() {{
+            btn.disabled = true;
+            const originalText = btn.innerText;
+            btn.innerText = "캡쳐중...";
+
+            try {{
+              await ensureScript("https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js", "html2canvas");
+              await ensureScript("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js", "jspdf");
+
+              const msgs = Array.from(DOC.querySelectorAll('[data-testid="stChatMessage"]'));
+              if (!msgs.length) {{
+                alert("캡쳐할 대화가 없습니다.");
+                return;
+              }}
+
+              // 임시 캡쳐 컨테이너 생성 (대화창만 복제)
+              const tmp = DOC.createElement('div');
+              tmp.id = "ytcc_capture_tmp";
+              tmp.style.position = "absolute";
+              tmp.style.left = "0px";
+              tmp.style.top = "0px";
+              tmp.style.transform = "translateX(-12000px)";
+              tmp.style.width = "980px";
+              tmp.style.background = "#ffffff";
+              tmp.style.padding = "18px";
+              tmp.style.borderRadius = "12px";
+              tmp.style.color = "#111827";
+
+              const title = DOC.createElement('div');
+              title.style.fontSize = "14px";
+              title.style.fontWeight = "700";
+              title.style.marginBottom = "10px";
+              title.innerText = "유튜브 댓글분석: AI 챗봇 — 대화 캡쳐";
+              tmp.appendChild(title);
+
+              const meta = DOC.createElement('div');
+              meta.style.fontSize = "12px";
+              meta.style.color = "#6b7280";
+              meta.style.marginBottom = "12px";
+              meta.innerText = "생성일시: " + (new Date()).toLocaleString();
+              tmp.appendChild(meta);
+
+              msgs.forEach(m => {{
+                tmp.appendChild(m.cloneNode(true));
+              }});
+
+              DOC.body.appendChild(tmp);
+
+              const canvas = await PARENT.html2canvas(tmp, {{
+                scale: 2,
+                useCORS: true,
+                backgroundColor: "#ffffff",
+                logging: false
+              }});
+
+              DOC.body.removeChild(tmp);
+
+              const imgData = canvas.toDataURL("image/png");
+              const {{ jsPDF }} = PARENT.jspdf;
+
+              const pdf = new jsPDF("p", "pt", "a4");
+              const pageWidth = pdf.internal.pageSize.getWidth();
+              const pageHeight = pdf.internal.pageSize.getHeight();
+
+              const imgWidth = pageWidth;
+              const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+              let heightLeft = imgHeight;
+              let position = 0;
+
+              pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+              heightLeft -= pageHeight;
+
+              while (heightLeft > 0) {{
+                position = heightLeft - imgHeight;
+                pdf.addPage();
+                pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+                heightLeft -= pageHeight;
+              }}
+
+              pdf.save("{safe}.pdf");
+            }} catch (err) {{
+              console.error(err);
+              alert("PDF 캡쳐 중 오류가 발생했습니다. 콘솔 로그를 확인해주세요.");
+            }} finally {{
+              btn.disabled = false;
+              btn.innerText = originalText;
+            }}
+          }}
+
+          btn.addEventListener("click", captureToPdf);
+        }})();
+        </script>
+        """,
+        height=70,
+    )
+
 def render_metadata_and_downloads():
     if not (schema := st.session_state.get("last_schema")):
         return
@@ -1948,8 +2092,11 @@ with st.sidebar:
                 unsafe_allow_html=True,
             )
         with u2:
-            st.markdown('<div class="logout-inline"><a href="?logout=1">로그아웃</a></div>', unsafe_allow_html=True)
-
+            st.markdown('<div class="logout-link">', unsafe_allow_html=True)
+            if st.button("로그아웃", key="logout_btn"):
+                _logout_and_clear()
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
 
 
     st.markdown("""<style>[data-testid="stSidebarUserContent"] {display: flex; flex-direction: column; height: calc(100vh - 4rem);} .sidebar-top-section { flex-grow: 1; overflow-y: auto; } .sidebar-bottom-section { flex-shrink: 0; }</style>""", unsafe_allow_html=True)
@@ -1979,18 +2126,8 @@ with st.sidebar:
 
         with c_pdf:
             st.markdown('<div class="pdf-chat-btn">', unsafe_allow_html=True)
-            pdf_bytes = _get_cached_session_pdf_bytes()
             pdf_title = _session_title_for_pdf()
-            if not pdf_bytes:
-                st.caption('PDF 기능 사용을 위해 reportlab 설치가 필요합니다.')
-            else:
-                st.download_button(
-                "PDF저장",
-                data=pdf_bytes,
-                file_name=f"{pdf_title}.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-            )
+            render_capture_pdf_button(pdf_title, label="PDF저장")
             st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown('</div>', unsafe_allow_html=True)
@@ -2050,8 +2187,6 @@ with st.sidebar:
                                         st.session_state.session_to_delete = sess
                                         st.rerun()
                             st.markdown('</div>', unsafe_allow_html=True)
-                            st.session_state.session_to_delete = sess
-                            st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
         except Exception: st.error("기록 로딩 실패")
     st.markdown('</div>', unsafe_allow_html=True)
