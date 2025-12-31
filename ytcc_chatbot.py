@@ -328,8 +328,103 @@ def get_current_user() -> Optional[dict]:
 def is_authenticated() -> bool:
     return bool(st.session_state.get("auth_ok") and st.session_state.get("auth_user_id"))
 
+def _qp_get() -> dict:
+    """Query params helper (supports both old/new Streamlit APIs)."""
+    try:
+        # Streamlit >= 1.30
+        return dict(st.query_params)
+    except Exception:
+        try:
+            return st.experimental_get_query_params()
+        except Exception:
+            return {}
+
+def _qp_set(**kwargs):
+    """Set query params helper (supports both old/new Streamlit APIs)."""
+    # Normalize: remove keys with None/""/[] values
+    cleaned = {}
+    for k, v in kwargs.items():
+        if v is None:
+            continue
+        if isinstance(v, (list, tuple)):
+            if len(v) == 0:
+                continue
+            cleaned[k] = list(v)
+        else:
+            s = str(v).strip()
+            if s == "":
+                continue
+            cleaned[k] = s
+
+    try:
+        st.query_params.clear()
+        for k, v in cleaned.items():
+            st.query_params[k] = v
+        return
+    except Exception:
+        pass
+
+    try:
+        st.experimental_set_query_params(**cleaned)
+    except Exception:
+        return
+
+def _b64url_encode(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).decode("utf-8").rstrip("=")
+
+def _b64url_decode(s: str) -> bytes:
+    pad = "=" * (-len(s) % 4)
+    return base64.urlsafe_b64decode((s + pad).encode("utf-8"))
+
+def _auth_signing_secret() -> bytes:
+    # Prefer pepper; fallback to repo token; fallback to a fixed dev string (last resort).
+    pepper = _get_auth_pepper()
+    secret = pepper or str(st.secrets.get("AUTH_SIGNING_SECRET", "") or "") or (GITHUB_TOKEN or "") or "dev-secret"
+    return secret.encode("utf-8")
+
+def _make_auth_token(user_id: str, ttl_hours: int = None) -> str:
+    ttl = ttl_hours if ttl_hours is not None else int(st.secrets.get("AUTH_TOKEN_TTL_HOURS", 24*14) or (24*14))
+    exp = int(time.time() + max(60, ttl * 3600))
+    payload = {"uid": user_id, "exp": exp}
+    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    body = _b64url_encode(raw)
+    sig = hmac.new(_auth_signing_secret(), body.encode("utf-8"), hashlib.sha256).digest()
+    return f"{body}.{_b64url_encode(sig)}"
+
+def _verify_auth_token(token: str) -> Optional[dict]:
+    try:
+        if not token or "." not in token:
+            return None
+        body, sig = token.split(".", 1)
+        expect = hmac.new(_auth_signing_secret(), body.encode("utf-8"), hashlib.sha256).digest()
+        if not hmac.compare_digest(_b64url_decode(sig), expect):
+            return None
+        payload = json.loads(_b64url_decode(body).decode("utf-8"))
+        if not isinstance(payload, dict):
+            return None
+        if int(payload.get("exp", 0)) < int(time.time()):
+            return None
+        uid = (payload.get("uid") or "").strip()
+        if not uid:
+            return None
+        return payload
+    except Exception:
+        return None
+
+def _logout_and_clear():
+    # Keep query params clean
+    _qp_set()  # clears all
+    # clear in-memory session
+    st.session_state.clear()
+    ensure_state()
+    st.rerun()
+
 def require_auth():
-    """Gate the app behind a login screen if users are configured in secrets."""
+    """Gate the app behind a login screen if users are configured in secrets.
+
+    - 로그인 성공 시 URL query param(auth=...)에 서명 토큰을 심어서 새로고침에도 로그인 유지
+    - 로그아웃은 ?logout=1 링크로 처리(버튼 박스 문제 회피)
+    """
     users = st.session_state.get("_auth_users_cache") or _load_auth_users_from_secrets()
     st.session_state["_auth_users_cache"] = users
     auth_enabled = bool(users)
@@ -337,6 +432,12 @@ def require_auth():
     if not auth_enabled:
         return  # no users configured -> open access
 
+    # Handle logout via query param
+    qp = _qp_get()
+    if "logout" in qp:
+        _logout_and_clear()
+
+    # Already authenticated in this session?
     if is_authenticated():
         u = get_current_user() or {}
         if u and (u.get("active") is False):
@@ -345,24 +446,57 @@ def require_auth():
         else:
             return
 
-    st.markdown(
-        '''
-        <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:75vh;">
-          <h1 style="font-size:2.4rem; font-weight:650;
-                     background:-webkit-linear-gradient(45deg,#4285F4,#9B72CB,#D96570,#F2A60C);
-                     -webkit-background-clip:text; -webkit-text-fill-color:transparent;">
-            🔐 로그인
-          </h1>
-          <p style="color:#6b7280; margin-top:0.25rem;">계정으로 로그인하면 개인별 대화 저장/불러오기가 가능합니다.</p>
-        </div>
-        ''',
-        unsafe_allow_html=True
-    )
+    # Try restore from signed token in query params
+    token = None
+    try:
+        if "auth" in qp:
+            token = qp.get("auth")
+            if isinstance(token, list):
+                token = token[0] if token else None
+    except Exception:
+        token = None
 
+    payload = _verify_auth_token(str(token or ""))
+    if payload:
+        uid = payload["uid"]
+        rec = users.get(uid)
+        if rec and (rec.get("active") is not False):
+            st.session_state["auth_ok"] = True
+            st.session_state["auth_user_id"] = uid
+            st.session_state["auth_role"] = rec.get("role", "user")
+            st.session_state["auth_display_name"] = rec.get("display_name", uid)
+            st.session_state["client_instance_id"] = st.session_state.get("client_instance_id") or uuid4().hex[:10]
+            return
+
+    # --- Login Screen (Centered / Clean) ---
     c1, c2, c3 = st.columns([1.2, 1.0, 1.2])
     with c2:
+        st.markdown("<div style='height:10vh;'></div>", unsafe_allow_html=True)
+
+        # 앱 이름
+        st.markdown(
+            """
+            <div style="text-align:center;">
+              <h1 style="font-size:2.0rem; font-weight:700; margin:0;
+                         background:-webkit-linear-gradient(45deg,#4285F4,#9B72CB,#D96570,#F2A60C);
+                         -webkit-background-clip:text; -webkit-text-fill-color:transparent;">
+                💬 유튜브 댓글분석: AI 챗봇
+              </h1>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # 로그인 타이틀
+        st.markdown(
+            "<div style='text-align:center; margin-top:0.9rem; margin-bottom:0.6rem;'>"
+            "<h2 style='font-size:1.3rem; font-weight:650; margin:0; color:#111827;'>로그인</h2>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
         with st.form("login_form", clear_on_submit=False):
-            uid = st.text_input("ID", value="", placeholder="예: hobum")
+            uid = st.text_input("ID", value="", placeholder="아이디")
             pw = st.text_input("Password", value="", type="password", placeholder="비밀번호")
             submitted = st.form_submit_button("로그인", use_container_width=True)
 
@@ -381,6 +515,10 @@ def require_auth():
             st.session_state["auth_role"] = rec.get("role", "user")
             st.session_state["auth_display_name"] = rec.get("display_name", uid)
             st.session_state["client_instance_id"] = st.session_state.get("client_instance_id") or uuid4().hex[:10]
+
+            # persist login in query params
+            tok = _make_auth_token(uid)
+            _qp_set(auth=tok)
             st.rerun()
 
     st.stop()
@@ -1528,12 +1666,14 @@ with st.sidebar:
         uid  = st.session_state.get("auth_user_id")
         st.markdown(f"**👤 {disp}**  \n`{uid}`")
 
-        st.markdown('<div class="logout-link">', unsafe_allow_html=True)
-        if st.button("로그아웃", key="logout_btn"):
-            st.session_state.clear()
-            ensure_state()
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # 로그아웃: 버튼 대신 텍스트 링크(스트림릿 버튼 CSS 안 먹는 이슈 회피)
+        st.markdown(
+            '<div style="margin-top:0.2rem;">'
+            '<a href="?logout=1" style="font-size:12px; color:#6b7280; text-decoration:underline;">로그아웃</a>'
+            '</div>',
+            unsafe_allow_html=True
+        )
 
 
     st.markdown("""<style>[data-testid="stSidebarUserContent"] {display: flex; flex-direction: column; height: calc(100vh - 4rem);} .sidebar-top-section { flex-grow: 1; overflow-y: auto; } .sidebar-bottom-section { flex-shrink: 0; }</style>""", unsafe_allow_html=True)
