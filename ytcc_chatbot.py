@@ -1,6 +1,16 @@
 
 # region [Imports & Setup]
 import streamlit as st
+from io import BytesIO
+from functools import lru_cache
+
+# PDF export
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.lib.utils import simpleSplit
+
 import pandas as pd
 import os
 import re
@@ -170,8 +180,51 @@ st.markdown(
   /* 버튼 간격 타이트하게 */
   .tight-btn .stButton button {
       margin-top: 0.0rem !important;
-      margin-bottom: 0.35rem !important;
+      margin-bottom: 0.05rem !important;
   }
+
+
+  /* PDF 버튼 스타일 */
+  .pdf-chat-btn button {
+      background-color: #fff7ed;
+      color: #9a3412 !important;
+      border: 1px solid #fed7aa !important;
+  }
+  .pdf-chat-btn button:hover {
+      background-color: #ffedd5;
+      color: #7c2d12 !important;
+      border: 1px solid #fdba74 !important;
+  }
+
+  /* 대화기록: 세션명을 텍스트처럼 */
+  .session-list .sess-name .stButton button {
+      background: transparent !important;
+      border: none !important;
+      box-shadow: none !important;
+      padding: 0.10rem 0.1rem !important;
+      margin: 0 !important;
+      color: #111827 !important;
+      font-weight: 550 !important;
+      text-align: left !important;
+      width: 100% !important;
+  }
+  .session-list .sess-name .stButton button:hover {
+      background: transparent !important;
+      text-decoration: underline;
+  }
+
+  /* 더보기(⋯) 버튼 작게 */
+  .session-list .more-menu .stButton button {
+      padding: 0.08rem 0.35rem !important;
+      min-height: 1.8rem !important;
+      line-height: 1 !important;
+      font-size: 14px !important;
+  }
+
+  /* 로그아웃 링크 (우측 배치) */
+  .logout-inline { text-align: right; margin-top: 0.1rem; }
+  .logout-inline a { font-size:12px; color:#6b7280; text-decoration:underline; }
+  .logout-inline a:hover { color:#374151; }
 
 </style>
 """,
@@ -248,6 +301,96 @@ def ensure_state():
 
 ensure_state()
 # endregion
+
+
+# region [PDF Export: current session -> PDF]
+@lru_cache(maxsize=1)
+def _pdf_font_name() -> str:
+    # Korean-capable fonts (common on Linux images)
+    candidates = [
+        ("/usr/share/fonts/truetype/unfonts-core/UnDotum.ttf", "KFONT_DOTUM"),
+        ("/usr/share/fonts/truetype/unfonts-core/UnBatang.ttf", "KFONT_BATANG"),
+    ]
+    for fp, name in candidates:
+        try:
+            if os.path.exists(fp):
+                pdfmetrics.registerFont(TTFont(name, fp))
+                return name
+        except Exception:
+            pass
+    return "Helvetica"
+
+def build_session_pdf_bytes(session_title: str, user_label: str, chat: list) -> bytes:
+    font = _pdf_font_name()
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+    left, right = 40, 40
+    y = h - 50
+    max_width = w - left - right
+
+    def new_page():
+        nonlocal y
+        c.showPage()
+        c.setFont(font, 11)
+        y = h - 50
+
+    # Title
+    c.setFont(font, 16)
+    c.drawString(left, y, f"대화 기록: {session_title}")
+    y -= 22
+    c.setFont(font, 10)
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    c.drawString(left, y, f"사용자: {user_label}   ·   생성: {ts}")
+    y -= 18
+    c.setFont(font, 11)
+
+    def draw_block(label: str, text: str):
+        nonlocal y
+        if y < 90:
+            new_page()
+        c.setFont(font, 11)
+        c.drawString(left, y, label)
+        y -= 14
+
+        c.setFont(font, 11)
+        lines = []
+        for para in (text or "").splitlines() or [""]:
+            lines.extend(simpleSplit(para, font, 11, max_width))
+            lines.append("")
+        if lines and lines[-1] == "":
+            lines.pop()
+
+        for ln in lines:
+            if y < 60:
+                new_page()
+            c.drawString(left, y, ln)
+            y -= 14
+
+        y -= 10
+
+    for m in chat or []:
+        role = (m.get("role") or "").lower()
+        label = "USER" if role == "user" else "ASSISTANT"
+        draw_block(f"[{label}]", m.get("content", ""))
+
+    c.save()
+    return buf.getvalue()
+
+def _session_title_for_pdf() -> str:
+    return st.session_state.get("loaded_session_name") or "현재대화"
+
+def _get_cached_session_pdf_bytes() -> bytes:
+    title = _session_title_for_pdf()
+    user_label = st.session_state.get("auth_display_name") or st.session_state.get("auth_user_id") or ""
+    raw = json.dumps(st.session_state.get("chat", []), ensure_ascii=False, sort_keys=True).encode("utf-8")
+    h = hashlib.sha256(raw).hexdigest()
+    if st.session_state.get("_pdf_chat_hash") != h:
+        st.session_state["_pdf_chat_hash"] = h
+        st.session_state["_pdf_bytes"] = build_session_pdf_bytes(title, user_label, st.session_state.get("chat", []))
+    return st.session_state.get("_pdf_bytes") or b""
+# endregion
+
 
 # region [Auth: ID/PW in secrets.toml]
 import hmac
@@ -1663,16 +1806,19 @@ with st.sidebar:
     if st.session_state.get("auth_user_id"):
         disp = st.session_state.get("auth_display_name", st.session_state.get("auth_user_id"))
         uid  = st.session_state.get("auth_user_id")
-        st.markdown(f"**👤 {disp}**  \n`{uid}`")
+        role = st.session_state.get("auth_role", "user")
 
-        
-        # 로그아웃: 버튼 대신 텍스트 링크(스트림릿 버튼 CSS 안 먹는 이슈 회피)
-        st.markdown(
-            '<div style="margin-top:0.2rem;">'
-            '<a href="?logout=1" style="font-size:12px; color:#6b7280; text-decoration:underline;">로그아웃</a>'
-            '</div>',
-            unsafe_allow_html=True
-        )
+        u1, u2 = st.columns([0.78, 0.22])
+        with u1:
+            st.markdown(
+                f"**👤 {disp}**  <span style='color:#6b7280; font-size:12px;'>({role})</span>",
+                unsafe_allow_html=True,
+            )
+        with u2:
+            st.markdown('<div class="logout-inline"><a href="?logout=1">로그아웃</a></div>', unsafe_allow_html=True)
+
+        st.markdown(f"<div style='margin-top:0.1rem; margin-bottom:0.2rem;'><code>{uid}</code></div>", unsafe_allow_html=True)
+
 
 
     st.markdown("""<style>[data-testid="stSidebarUserContent"] {display: flex; flex-direction: column; height: calc(100vh - 4rem);} .sidebar-top-section { flex-grow: 1; overflow-y: auto; } .sidebar-bottom-section { flex-shrink: 0; }</style>""", unsafe_allow_html=True)
@@ -1687,17 +1833,39 @@ with st.sidebar:
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
+    # 저장 / PDF (한 행)
     if st.session_state.chat and st.session_state.last_csv:
-        st.markdown('<div class="save-chat-btn tight-btn">', unsafe_allow_html=True)
-        if st.button("💾 현재 대화 저장", use_container_width=True):
-            with st.spinner("세션 저장 중..."):
-                success, result = save_current_session_to_github()
-            if success:
-                st.success(f"'{result}' 저장 완료!")
-                time.sleep(2)
-                st.rerun()
-            else: st.error(result)
+        st.markdown('<div class="tight-btn">', unsafe_allow_html=True)
+        c_save, c_pdf = st.columns([1, 1], gap="small")
+        with c_save:
+            st.markdown('<div class="save-chat-btn">', unsafe_allow_html=True)
+            if st.button("💾 현재 대화 저장", use_container_width=True):
+                with st.spinner("세션 저장 중..."):
+                    success, result = save_current_session_to_github()
+                if success:
+                    st.success(f"'{result}' 저장 완료!")
+                    time.sleep(1.2)
+                    st.rerun()
+                else:
+                    st.error(result)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        with c_pdf:
+            st.markdown('<div class="pdf-chat-btn">', unsafe_allow_html=True)
+            pdf_bytes = _get_cached_session_pdf_bytes()
+            pdf_title = _session_title_for_pdf()
+            st.download_button(
+                "📄 PDF 저장",
+                data=pdf_bytes,
+                file_name=f"{pdf_title}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
+            st.markdown('</div>', unsafe_allow_html=True)
+
         st.markdown('</div>', unsafe_allow_html=True)
+
+
 
     st.markdown("---")
     st.markdown("#### 대화 기록")
@@ -1724,10 +1892,32 @@ with st.sidebar:
                             st.session_state.pop('editing_session', None)
                             st.rerun()
                     else:
-                        c1, c2, c3 = st.columns([0.7, 0.15, 0.15])
-                        if c1.button(sess, key=f"sess_{sess}", use_container_width=True):
-                            st.session_state.session_to_load = sess
-                            st.rerun()
+                        c1, c2 = st.columns([0.84, 0.16], gap="small")
+                        with c1:
+                            st.markdown('<div class="sess-name">', unsafe_allow_html=True)
+                            if st.button(sess, key=f"sess_{sess}", use_container_width=True):
+                                st.session_state.session_to_load = sess
+                                st.rerun()
+                            st.markdown('</div>', unsafe_allow_html=True)
+                        with c2:
+                            st.markdown('<div class="more-menu">', unsafe_allow_html=True)
+                            if hasattr(st, "popover"):
+                                with st.popover("⋯"):
+                                    if st.button("이름 변경", key=f"more_edit_{sess}", use_container_width=True):
+                                        st.session_state.editing_session = sess
+                                        st.rerun()
+                                    if st.button("삭제", key=f"more_del_{sess}", use_container_width=True):
+                                        st.session_state.session_to_delete = sess
+                                        st.rerun()
+                            else:
+                                with st.expander("⋯"):
+                                    if st.button("이름 변경", key=f"more_edit_{sess}", use_container_width=True):
+                                        st.session_state.editing_session = sess
+                                        st.rerun()
+                                    if st.button("삭제", key=f"more_del_{sess}", use_container_width=True):
+                                        st.session_state.session_to_delete = sess
+                                        st.rerun()
+                            st.markdown('</div>', unsafe_allow_html=True)
                         if c2.button("✏️", key=f"edit_{sess}"):
                             st.session_state.editing_session = sess
                             st.rerun()
