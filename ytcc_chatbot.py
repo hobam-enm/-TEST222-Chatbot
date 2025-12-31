@@ -417,7 +417,6 @@ def _logout_and_clear():
     # clear in-memory session
     st.session_state.clear()
     ensure_state()
-    st.rerun()
 
 def require_auth():
     """Gate the app behind a login screen if users are configured in secrets.
@@ -519,7 +518,7 @@ def require_auth():
             # persist login in query params
             tok = _make_auth_token(uid)
             _qp_set(auth=tok)
-            st.rerun()
+            return
 
     st.stop()
 # endregion
