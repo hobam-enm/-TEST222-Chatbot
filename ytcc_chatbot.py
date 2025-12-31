@@ -188,13 +188,26 @@ st.markdown(
 }
 
 
-/* ✅ 사이드바 전체 요소 간격 더 타이트하게 */
-[data-testid="stSidebar"] .element-container { margin: 0.02rem 0 !important; padding: 0 !important; }
-[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] { gap: 0.20rem !important; margin-top: -0.15rem !important; }
-[data-testid="stSidebar"] .new-chat-btn { margin-bottom: -0.25rem !important; }
+/* ✅ 사이드바 전체 요소 간격: '초강제' 압축 */
+[data-testid="stSidebar"] .element-container { margin: 0 !important; padding: 0 !important; }
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div { margin: 0 !important; padding: 0 !important; }
+[data-testid="stSidebar"] .stMarkdown { margin: 0 !important; padding: 0 !important; }
+[data-testid="stSidebar"] .stButton,
+[data-testid="stSidebar"] .stDownloadButton { margin: 0 !important; padding: 0 !important; }
 
+[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] { gap: 0.16rem !important; margin: 0 !important; padding: 0 !important; }
 
-  
+[data-testid="stSidebar"] .new-chat-btn,
+[data-testid="stSidebar"] .save-chat-btn,
+[data-testid="stSidebar"] .pdf-chat-btn,
+[data-testid="stSidebar"] .logout-link { margin: 0 !important; padding: 0 !important; }
+
+[data-testid="stSidebar"] hr { margin: 0.35rem 0 !important; }
+[data-testid="stSidebar"] h3,
+[data-testid="stSidebar"] h4,
+[data-testid="stSidebar"] .stMarkdown h3,
+[data-testid="stSidebar"] .stMarkdown h4 { margin: 0.35rem 0 0.25rem 0 !important; padding: 0 !important; }
+
 /* PDF 버튼 스타일 (세션저장과 동일) */
 .pdf-chat-btn button,
 .pdf-chat-btn [data-testid="stDownloadButton"] button,
@@ -240,7 +253,6 @@ st.markdown(
   .logout-inline { text-align: right; margin-top: 0.1rem; }
   .logout-inline a { font-size:12px; color:#6b7280; text-decoration:underline; }
   .logout-inline a:hover { color:#374151; }
-
 </style>
 """,
     unsafe_allow_html=True
@@ -705,7 +717,7 @@ def require_auth():
     """Gate the app behind a login screen if users are configured in secrets.
 
     - 로그인 성공 시 URL query param(auth=...)에 서명 토큰을 심어서 새로고침에도 로그인 유지
-    - 로그아웃은 ?logout=1 링크로 처리(버튼 박스 문제 회피)
+    - 로그아웃은 사이드바 '로그아웃' 버튼으로 처리(같은 창에서 상태 초기화)
     """
     users = st.session_state.get("_auth_users_cache") or _load_auth_users_from_secrets()
     st.session_state["_auth_users_cache"] = users
@@ -1623,9 +1635,12 @@ def scroll_to_bottom():
     )
 
 def render_capture_pdf_button(file_basename: str, label: str = "PDF저장"):
-    # 대화창(채팅 메시지 영역)만 "스크린샷 기반"으로 PDF 저장
-    # - reportlab 폰트/한글 깨짐 문제를 회피
-    # - 스크롤 끝까지(전체 메시지) 포함
+    """
+    대화창(채팅 메시지 영역)만 '스크린샷 기반'으로 PDF 저장한다.
+    - reportlab 한글/레이아웃 이슈 회피
+    - 스크롤 끝까지(전체 메시지) 포함
+    - 우측 잘림 방지(캡쳐 폭을 동적으로 확보 + 줄바꿈 강제)
+    """
 
     # 파일명 안전화
     safe = re.sub(r'[\\/:*?"<>|]+', "_", (file_basename or "chat")).strip()
@@ -1636,10 +1651,40 @@ def render_capture_pdf_button(file_basename: str, label: str = "PDF저장"):
 
     st_html(
         f"""
-        <div style="width:100%;">
-          <button id="{btn_id}" class="ytcc-cap-pdf-btn" style="width:100%; padding:0.60rem 0.6rem; border-radius:12px; border:1px solid #e5e7eb; background:#ffffff; cursor:pointer; font-size:14px; font-weight:600;">
-            {label}
-          </button>
+        <style>
+          html, body {{
+            margin: 0; padding: 0;
+            background: transparent;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", Arial, sans-serif;
+          }}
+          .ytcc-cap-wrap {{ width: 100%; margin: 0; padding: 0; }}
+          /* ✅ '세션저장' 톤과 동일하게 */
+          .ytcc-cap-btn {{
+            width: 100%;
+            padding: 0.30rem 0.55rem;
+            border-radius: 12px;
+            border: 1px solid #cdeedb;
+            background: #eafaf1;
+            color: #127a3a;
+            cursor: pointer;
+            font-size: 0.72rem;
+            font-weight: 650;
+            line-height: 1.0;
+            box-sizing: border-box;
+          }}
+          .ytcc-cap-btn:hover {{
+            background: #d6f3e4;
+            border-color: #bfe8d3;
+            color: #0f6a32;
+          }}
+          .ytcc-cap-btn:disabled {{
+            opacity: 0.70;
+            cursor: default;
+          }}
+</style>
+
+        <div class="ytcc-cap-wrap">
+          <button id="{btn_id}" class="ytcc-cap-btn">{label}</button>
         </div>
 
         <script>
@@ -1650,7 +1695,6 @@ def render_capture_pdf_button(file_basename: str, label: str = "PDF저장"):
           const PARENT = window.parent;
           const DOC = PARENT.document;
 
-          // 부모 문서에 스크립트 로드 (한 번만)
           function ensureScript(src, globalName) {{
             return new Promise((resolve, reject) => {{
               try {{
@@ -1684,44 +1728,59 @@ def render_capture_pdf_button(file_basename: str, label: str = "PDF저장"):
                 return;
               }}
 
-              // 임시 캡쳐 컨테이너 생성 (대화창만 복제)
+              // ✅ 첫 채팅 메시지 폭을 기준으로 캡쳐 폭 확장 (우측 잘림 방지)
+              const r = msgs[0].getBoundingClientRect();
+              const capW = Math.max(1200, Math.min(1700, (r.width || 1200) + 140));
+
               const tmp = DOC.createElement('div');
               tmp.id = "ytcc_capture_tmp";
               tmp.style.position = "absolute";
               tmp.style.left = "0px";
               tmp.style.top = "0px";
-              tmp.style.transform = "translateX(-12000px)";
-              tmp.style.width = "980px";
+              tmp.style.transform = "translateX(-20000px)";
+              tmp.style.width = capW + "px";
               tmp.style.background = "#ffffff";
-              tmp.style.padding = "18px";
+              tmp.style.padding = "18px 22px";
               tmp.style.borderRadius = "12px";
               tmp.style.color = "#111827";
+              tmp.style.boxSizing = "border-box";
+              tmp.style.overflow = "visible";
+              tmp.style.overflowWrap = "anywhere";
+              tmp.style.wordBreak = "break-word";
 
               const title = DOC.createElement('div');
               title.style.fontSize = "14px";
-              title.style.fontWeight = "700";
-              title.style.marginBottom = "10px";
+              title.style.fontWeight = "800";
+              title.style.marginBottom = "6px";
               title.innerText = "유튜브 댓글분석: AI 챗봇 — 대화 캡쳐";
               tmp.appendChild(title);
 
               const meta = DOC.createElement('div');
               meta.style.fontSize = "12px";
               meta.style.color = "#6b7280";
-              meta.style.marginBottom = "12px";
+              meta.style.marginBottom = "10px";
               meta.innerText = "생성일시: " + (new Date()).toLocaleString();
               tmp.appendChild(meta);
 
-              msgs.forEach(m => {{
-                tmp.appendChild(m.cloneNode(true));
-              }});
-
+              msgs.forEach(m => tmp.appendChild(m.cloneNode(true)));
               DOC.body.appendChild(tmp);
+
+              // ✅ 긴 URL/코드블럭도 강제로 줄바꿈 (우측 잘림 방지)
+              tmp.querySelectorAll("*").forEach(el => {{
+                try {{
+                  el.style.boxSizing = "border-box";
+                  el.style.maxWidth = "100%";
+                  el.style.overflowWrap = "anywhere";
+                  el.style.wordBreak = "break-word";
+                }} catch (e) {{}}
+              }});
 
               const canvas = await PARENT.html2canvas(tmp, {{
                 scale: 2,
                 useCORS: true,
                 backgroundColor: "#ffffff",
-                logging: false
+                logging: false,
+                windowWidth: capW,
               }});
 
               DOC.body.removeChild(tmp);
@@ -1763,7 +1822,7 @@ def render_capture_pdf_button(file_basename: str, label: str = "PDF저장"):
         }})();
         </script>
         """,
-        height=70,
+        height=44,
     )
 
 def render_metadata_and_downloads():
@@ -1840,7 +1899,7 @@ def render_chat():
                 .yt-report table { width: 100%; border-collapse: collapse; font-size: 0.9em; margin: 10px 0; }
                 .yt-report th { text-align: left; border-bottom: 2px solid #ddd; padding: 5px; color: #555; background-color: #f9fafb; }
                 .yt-report td { border-bottom: 1px solid #eee; padding: 8px 5px; vertical-align: top; }
-                </style>
+</style>
                 """
                 
                 # [안전장치] 잘린 태그 방지를 위해 div로 감쌈 (브라우저가 웬만하면 닫아줌)
@@ -2099,11 +2158,12 @@ with st.sidebar:
             st.markdown('</div>', unsafe_allow_html=True)
 
 
-    st.markdown("""<style>[data-testid="stSidebarUserContent"] {display: flex; flex-direction: column; height: calc(100vh - 4rem);} .sidebar-top-section { flex-grow: 1; overflow-y: auto; } .sidebar-bottom-section { flex-shrink: 0; }</style>""", unsafe_allow_html=True)
+    st.markdown("""<style>[data-testid="stSidebarUserContent"] {display: flex; flex-direction: column; height: calc(100vh - 4rem);} .sidebar-top-section { flex-grow: 1; overflow-y: auto; } .sidebar-bottom-section { flex-shrink: 0; }
+</style>""", unsafe_allow_html=True)
 
     st.markdown('<div class="sidebar-top-section">', unsafe_allow_html=True)
     st.markdown('<div class="new-chat-btn tight-btn">', unsafe_allow_html=True)
-    if st.button("새채팅", use_container_width=True):
+    if st.button("새채팅", use_container_width=True, key="new_chat_btn"):
         _reset_chat_only(keep_auth=True)
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
@@ -2113,7 +2173,7 @@ with st.sidebar:
         c_save, c_pdf = st.columns([1, 1], gap="small")
         with c_save:
             st.markdown('<div class="save-chat-btn">', unsafe_allow_html=True)
-            if st.button("세션저장", use_container_width=True):
+            if st.button("세션저장", use_container_width=True, key="save_session_btn"):
                 with st.spinner("세션 저장 중..."):
                     success, result = save_current_session_to_github()
                 if success:
