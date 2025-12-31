@@ -4,7 +4,6 @@ import streamlit as st
 from io import BytesIO
 from functools import lru_cache
 
-# PDF export (lazy import inside functions)
 import pandas as pd
 import os
 import re
@@ -688,7 +687,8 @@ def require_auth():
     qp = _qp_get()
     if "logout" in qp:
         _logout_and_clear()
-    st.rerun()
+        st.rerun()
+        st.stop()
 
     # Already authenticated in this session?
     if is_authenticated():
