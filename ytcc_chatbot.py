@@ -694,17 +694,9 @@ def require_auth():
         st.markdown(
             """
             <div style="text-align:center;">
-                    <h1 style="
-                    font-size:clamp(1.25rem, 2.4vw, 1.75rem);
-                    font-weight:700;
-                    margin:0;
-                    line-height:1.05;
-                    white-space:nowrap;
-                    word-break:keep-all;
-                    background:-webkit-linear-gradient(45deg,#4285F4,#9B72CB,#D96570,#F2A60C);
-                    -webkit-background-clip:text;
-                    -webkit-text-fill-color:transparent;
-                    ">
+              <h1 style="font-size:2.0rem; font-weight:700; margin:0;
+                         background:-webkit-linear-gradient(45deg,#4285F4,#9B72CB,#D96570,#F2A60C);
+                         -webkit-background-clip:text; -webkit-text-fill-color:transparent;">
                 💬 유튜브 댓글분석: AI 챗봇
               </h1>
             </div>
@@ -1893,7 +1885,7 @@ def render_sidebar_controls_html(display_name: str, role: str, show_actions: boo
 
   .ytcc-sb-title{
     font-weight:800;
-    font-size: clamp(1.05rem, 1.7vw, 1.50rem);
+    font-size: 1.55rem;
     line-height: 1.15;
     margin: 0 0 8px 0;
     background: -webkit-linear-gradient(45deg, #4285F4, #9B72CB, #D96570, #F2A60C);
@@ -1985,21 +1977,45 @@ def render_sidebar_controls_html(display_name: str, role: str, show_actions: boo
 
 <script>
 (function(){
-  const P = window.parent;
+  // ✅ Streamlit components iframe 깊이에 상관없이 최상위(같은 origin) window 찾기
+  const P = (function(){
+    try{
+      let w = window;
+      while (w.parent && w.parent !== w) w = w.parent;
+      return w;
+    }catch(e){
+      return window.parent;
+    }
+  })();
   const DOC = P.document;
 
-  function setParam(key, val){
+  // ✅ 한 번에 query param 세팅/삭제 후, 같은 창에서 확실히 리로드
+  function navigate(setObj, delKeys){
     try{
       const url = new URL(P.location.href);
       const sp = url.searchParams;
-      if(val === null || val === undefined || String(val).trim()===""){
-        sp.delete(key);
-      } else {
-        sp.set(key, val);
-      }
-      // 액션 재실행 방지 위해 hash는 유지
+
+      (delKeys || []).forEach(k => { try{ sp.delete(k); }catch(e){} });
+      Object.entries(setObj || {}).forEach(([k,v])=>{
+        if(v === null || v === undefined || String(v).trim()===""){
+          sp.delete(k);
+        } else {
+          sp.set(k, v);
+        }
+      });
+
       url.search = sp.toString();
-      P.location.href = url.toString();
+
+      // 1) URL만 교체(동일 페이지) → 2) 리로드 (sandbox/top-nav 제약 회피에 유리)
+      try{
+        P.history.replaceState(null, "", url.toString());
+        P.location.reload();
+        return;
+      }catch(e){}
+
+      // fallback
+      try{ P.location.assign(url.toString()); return; }catch(e){}
+      try{ P.location.href = url.toString(); }catch(e){}
     }catch(e){
       console.error(e);
     }
@@ -2012,13 +2028,13 @@ def render_sidebar_controls_html(display_name: str, role: str, show_actions: boo
   const btnPdf  = document.getElementById("ytcc_pdf__RID__");
 
   if(btnLogout){
-    btnLogout.addEventListener("click", ()=>{ setParam("logout","1"); setParam("action", null); });
+    btnLogout.addEventListener("click", ()=>{ navigate({logout:"1"}, ["action"]); });
   }
   if(btnNew){
-    btnNew.addEventListener("click", ()=>{ setParam("action","new_chat"); });
+    btnNew.addEventListener("click", ()=>{ navigate({action:"new_chat"}, ["logout"]); });
   }
   if(btnSave){
-    btnSave.addEventListener("click", ()=>{ setParam("action","save_session"); });
+    btnSave.addEventListener("click", ()=>{ navigate({action:"save_session"}, ["logout"]); });
   }
 
   // --- PDF 캡쳐 (대화창만 / 스크롤 끝까지) ---
@@ -2555,15 +2571,7 @@ else:
     scroll_to_bottom()
 
 
-is_followup = bool(st.session_state.get("last_csv"))
-
-placeholder_text = (
-    "예) 최근 24시간 태풍상사 반응 요약해줘 / 10월 1일부터 태풍상사 반응은 어때?"
-    if not is_followup
-    else "예) 방금 요약에서 '불만 포인트'만 더 깊게 / 이준호 연기력 관련 반응은 어때?"
-)
-
-if prompt := st.chat_input(placeholder=placeholder_text):
+if prompt := st.chat_input("예) 최근 24시간 태풍상사 반응 요약해줘 / 또는 영상 URL 붙여도 OK"):
     st.session_state.chat.append({"role": "user", "content": prompt})
     st.rerun()
 
