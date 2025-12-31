@@ -1885,7 +1885,7 @@ def render_sidebar_controls_html(display_name: str, role: str, show_actions: boo
 
   .ytcc-sb-title{
     font-weight:800;
-    font-size: 1.20rem;
+    font-size: clamp(1.05rem, 1.4vw, 1.40rem);
     line-height: 1.15;
     margin: 0 0 8px 0;
     background: -webkit-linear-gradient(45deg, #4285F4, #9B72CB, #D96570, #F2A60C);
@@ -2552,7 +2552,7 @@ is_followup = bool(st.session_state.get("last_csv"))
 placeholder_text = (
     "예) 최근 24시간 태풍상사 반응 요약해줘 / 10월 1일부터 태풍상사 반응은 어때?"
     if not is_followup
-    else "예) 방금 요약에서 '불만 포인트'만 더 깊게 - 이준호 연기력 관련 반응은 어때?"
+    else "예) 방금 요약에서 '불만 포인트'만 더 깊게 / 이준호 연기력 관련 반응은 어때?"
 )
 
 if prompt := st.chat_input(placeholder=placeholder_text):
