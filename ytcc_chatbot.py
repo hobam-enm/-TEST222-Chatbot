@@ -2130,10 +2130,6 @@ with st.sidebar:
             render_capture_pdf_button(pdf_title, label="PDF저장")
             st.markdown('</div>', unsafe_allow_html=True)
 
-        st.markdown('</div>', unsafe_allow_html=True)
-
-
-
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("---")
