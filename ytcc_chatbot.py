@@ -694,7 +694,7 @@ def require_auth():
         st.markdown(
             """
             <div style="text-align:center;">
-              <h1 style="font-size:2.0rem; font-weight:700; margin:0;
+              <h1 style="font-size:1.8rem; font-weight:700; margin:0;
                          background:-webkit-linear-gradient(45deg,#4285F4,#9B72CB,#D96570,#F2A60C);
                          -webkit-background-clip:text; -webkit-text-fill-color:transparent;">
                 💬 유튜브 댓글분석: AI 챗봇
