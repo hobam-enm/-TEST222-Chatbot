@@ -1921,9 +1921,6 @@ with st.sidebar:
                         if c2.button("✏️", key=f"edit_{sess}"):
                             st.session_state.editing_session = sess
                             st.rerun()
-                        if c3.button("🗑️", key=f"del_{sess}"):
-                            st.session_state.session_to_delete = sess
-                            st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
         except Exception: st.error("기록 로딩 실패")
     st.markdown('</div>', unsafe_allow_html=True)
