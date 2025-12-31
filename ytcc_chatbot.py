@@ -76,187 +76,110 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-st.markdown(
-    """
+GLOBAL_CSS = r'''
 <style>
-  /* Streamlit 메인 컨테이너 패딩 최소화 */
-  .main .block-container {
-      padding-top: 2rem;
-      padding-right: 1rem;
-      padding-left: 1rem;
-      padding-bottom: 5rem;
-  }
-  [data-testid="stSidebarContent"] {
-      padding-top: 0.9rem;
-  }
-  header {visibility: hidden;}
-  footer {visibility: hidden;}
-  #MainMenu {visibility: hidden;}
+  /* ===== App chrome ===== */
+  header, footer, #MainMenu { visibility: hidden; }
 
-  /* 사이드바 너비 고정 */
-  [data-testid="stSidebar"] {
-      width: 350px !important;
-      min-width: 350px !important;
-      max-width: 350px !important;
-  }
-  [data-testid="stSidebar"] + div[class*="resizer"] {
-      display: none;
+  /* ===== Main padding ===== */
+  .main .block-container{
+    padding-top: 1.6rem;
+    padding-right: 1rem;
+    padding-left: 1rem;
+    padding-bottom: 5rem;
+    max-width: 1300px;
   }
 
-  /* AI 답변 폰트 크기 조정 */
-  [data-testid="stChatMessage"]:has(span[data-testid="chat-avatar-assistant"]) p,
-  [data-testid="stChatMessage"]:has(span[data-testid="chat-avatar-assistant"]) li {
-      font-size: 0.95rem;
+  /* ===== Sidebar width ===== */
+  [data-testid="stSidebar"]{
+    width: 360px !important;
+    min-width: 360px !important;
+    max-width: 360px !important;
+  }
+  [data-testid="stSidebar"] + div[class*="resizer"]{ display:none; }
+
+  /* ===== Sidebar base spacing reset ===== */
+  [data-testid="stSidebarContent"]{
+    padding: 12px 14px 12px 14px !important;
+  }
+  [data-testid="stSidebar"] .element-container,
+  [data-testid="stSidebar"] .stMarkdown,
+  [data-testid="stSidebar"] .stButton,
+  [data-testid="stSidebar"] .stDownloadButton,
+  [data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div{
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  [data-testid="stSidebar"] [data-testid="stHorizontalBlock"]{
+    gap: 8px !important;
+    margin: 0 !important;
+    padding: 0 !important;
   }
 
-  /* 다운로드 버튼 스타일 */
-  .stDownloadButton button {
-      background-color: transparent;
-      color: #1c83e1;
-      border: none;
-      padding: 0;
-      text-decoration: underline;
-      font-size: 14px;
-      font-weight: normal;
+  /* Divider / section title spacing */
+  [data-testid="stSidebar"] hr{
+    margin: 10px 0 !important;
   }
-  .stDownloadButton button:hover {
-      color: #0b5cab;
+  [data-testid="stSidebar"] h4,
+  [data-testid="stSidebar"] .stMarkdown h4{
+    margin: 8px 0 8px 0 !important;
+    padding: 0 !important;
+    font-weight: 700;
   }
 
-  /* 세션 목록 버튼 스타일 */
-  .session-list .stButton button {
-      font-size: 0.9rem;
-      text-align: left;
-      font-weight: normal;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      display: block;
+  /* ===== Session list (대화 기록) ===== */
+  .session-list{
+    margin-top: 6px !important;
   }
-
-  /* 새 채팅 버튼 스타일 */
-  .new-chat-btn button {
-      background-color: #e8f0fe;
-      color: #0052CC !important;
-      border: 1px solid #d2e3fc !important;
-  }
-  .new-chat-btn button:hover {
-      background-color: #d2e3fc;
-      color: #0041A3 !important;
-      border: 1px solid #c2d8f8 !important;
-  }
-  /* 저장 버튼 스타일 (새 채팅과 색상 구분) */
-  .save-chat-btn button {
-      background-color: #eafaf1;
-      color: #127a3a !important;
-      border: 1px solid #cdeedb !important;
-  }
-  .save-chat-btn button:hover {
-      background-color: #d6f3e4;
-      color: #0f6a32 !important;
-      border: 1px solid #bfe8d3 !important;
-  }
-
-  /* 로그아웃: 텍스트 링크처럼 */
-  .logout-link .stButton button {
-      background: transparent !important;
-      border: none !important;
-      color: #6b7280 !important;
-      padding: 0 !important;
-      font-size: 12px !important;
-      font-weight: 500 !important;
-      text-decoration: underline;
-  }
-  .logout-link .stButton button:hover {
-      color: #374151 !important;
-  }
-
-  
-
-/* 버튼 간격/크기 타이트하게 (새채팅/세션저장/PDF저장) */
-.tight-btn .stButton button,
-.tight-btn [data-testid="stDownloadButton"] button,
-.save-chat-btn .stButton button,
-.pdf-chat-btn [data-testid="stDownloadButton"] button {
-    margin-top: 0.0rem !important;
-    margin-bottom: 0.0rem !important;
-    padding-top: 0.22rem !important;
-    padding-bottom: 0.22rem !important;
-    font-size: 0.72rem !important;
-    line-height: 1.05 !important;
+  .session-list .sess-name .stButton button{
+    background: #ffffff !important;
+    border: 1px solid #e5e7eb !important;
+    border-radius: 14px !important;
+    padding: 0.52rem 0.72rem !important;
+    box-shadow: none !important;
+    color: #111827 !important;
+    font-size: 0.90rem !important;
+    font-weight: 650 !important;
+    text-align: left !important;
+    width: 100% !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
     white-space: nowrap !important;
-}
-
-
-/* ✅ 사이드바 전체 요소 간격: '초강제' 압축 */
-[data-testid="stSidebar"] .element-container { margin: 0 !important; padding: 0 !important; }
-[data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div { margin: 0 !important; padding: 0 !important; }
-[data-testid="stSidebar"] .stMarkdown { margin: 0 !important; padding: 0 !important; }
-[data-testid="stSidebar"] .stButton,
-[data-testid="stSidebar"] .stDownloadButton { margin: 0 !important; padding: 0 !important; }
-
-[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] { gap: 0.16rem !important; margin: 0 !important; padding: 0 !important; }
-
-[data-testid="stSidebar"] .new-chat-btn,
-[data-testid="stSidebar"] .save-chat-btn,
-[data-testid="stSidebar"] .pdf-chat-btn,
-[data-testid="stSidebar"] .logout-link { margin: 0 !important; padding: 0 !important; }
-
-[data-testid="stSidebar"] hr { margin: 0.35rem 0 !important; }
-[data-testid="stSidebar"] h3,
-[data-testid="stSidebar"] h4,
-[data-testid="stSidebar"] .stMarkdown h3,
-[data-testid="stSidebar"] .stMarkdown h4 { margin: 0.35rem 0 0.25rem 0 !important; padding: 0 !important; }
-
-/* PDF 버튼 스타일 (세션저장과 동일) */
-.pdf-chat-btn button,
-.pdf-chat-btn [data-testid="stDownloadButton"] button,
-[data-testid="stSidebar"] [data-testid="stDownloadButton"] button {
-    background-color: #eafaf1 !important;
-    color: #127a3a !important;
-    border: 1px solid #cdeedb !important;
-}
-.pdf-chat-btn button:hover,
-.pdf-chat-btn [data-testid="stDownloadButton"] button:hover,
-[data-testid="stSidebar"] [data-testid="stDownloadButton"] button:hover {
-    background-color: #d6f3e4 !important;
-    color: #0f6a32 !important;
-    border: 1px solid #bfe8d3 !important;
-}
-
-  /* 대화기록: 세션명을 텍스트처럼 */
-  .session-list .sess-name .stButton button {
-      background: transparent !important;
-      border: none !important;
-      box-shadow: none !important;
-      padding: 0.10rem 0.1rem !important;
-      margin: 0 !important;
-      color: #111827 !important;
-      font-weight: 550 !important;
-      text-align: left !important;
-      width: 100% !important;
   }
-  .session-list .sess-name .stButton button:hover {
-      background: transparent !important;
-      text-decoration: underline;
+  .session-list .sess-name .stButton button:hover{
+    border-color: #d1d5db !important;
+    background: #f9fafb !important;
   }
 
-  /* 더보기(⋯) 버튼 작게 */
-  .session-list .more-menu .stButton button {
-      padding: 0.08rem 0.35rem !important;
-      min-height: 1.8rem !important;
-      line-height: 1 !important;
-      font-size: 14px !important;
+  /* ⋯ 버튼 */
+  .session-list .more-menu .stButton button{
+    background: #ffffff !important;
+    border: 1px solid #e5e7eb !important;
+    border-radius: 12px !important;
+    padding: 0.48rem 0.55rem !important;
+    min-height: 2.15rem !important;
+    line-height: 1 !important;
+    box-shadow: none !important;
+  }
+  .session-list .more-menu .stButton button:hover{
+    border-color: #d1d5db !important;
+    background: #f9fafb !important;
   }
 
-  /* 로그아웃 링크 (우측 배치) */
-  .logout-inline { text-align: right; margin-top: 0.1rem; }
-  .logout-inline a { font-size:12px; color:#6b7280; text-decoration:underline; }
-  .logout-inline a:hover { color:#374151; }
+  /* Rename input compact */
+  [data-testid="stSidebar"] input{
+    padding-top: 0.38rem !important;
+    padding-bottom: 0.38rem !important;
+  }
+
+  /* Assistant message font */
+  [data-testid="stChatMessage"]:has(span[data-testid="chat-avatar-assistant"]) p,
+  [data-testid="stChatMessage"]:has(span[data-testid="chat-avatar-assistant"]) li{
+    font-size: 0.95rem;
+  }
 </style>
-""",
-    unsafe_allow_html=True
-)
+'''
+st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
 # endregion
 
 
@@ -1910,6 +1833,336 @@ def render_chat():
             else:
                 # 일반 텍스트 대화
                 st.markdown(content)
+
+
+def render_sidebar_controls_html(display_name: str, role: str, show_actions: bool, pdf_basename: str):
+    """사이드바 상단 UI를 Streamlit 위젯이 아니라 '단일 HTML 블록'으로 렌더링한다.
+
+    - Streamlit은 마크다운 HTML로 위젯을 감쌀 수 없어서(=CSS가 안 먹음),
+      상단 컨트롤(로그아웃/새채팅/세션저장/PDF저장)을 하나의 HTML로 묶어 스타일/간격을 완전 고정한다.
+    - 새채팅/세션저장/로그아웃은 query param으로 액션을 전달해 서버에서 처리한다.
+    - PDF저장은 클라이언트에서 대화 DOM을 캡쳐해 PDF로 저장한다.
+    """
+
+    disp = (display_name or "").strip() or "사용자"
+    role = (role or "user").strip() or "user"
+
+    safe_pdf = re.sub(r'[\\/:*?"<>|]+', "_", (pdf_basename or "chat")).strip()
+    safe_pdf = re.sub(r"\s+", "_", safe_pdf) or "chat"
+
+    # iframe 내부에서만 쓰는 랜덤 id
+    rid = uuid4().hex[:8]
+
+    tpl = r'''
+<div class="ytcc-sb-wrap" id="ytcc_sb__RID__">
+  <div class="ytcc-sb-title">💬 유튜브 댓글분석: <span>AI 챗봇</span></div>
+
+  <div class="ytcc-sb-userrow">
+    <div class="ytcc-sb-userleft">
+      <div class="ytcc-sb-user">👤 __DISP__ <span class="ytcc-sb-role">(__ROLE__)</span></div>
+    </div>
+    <div class="ytcc-sb-userright">
+      <a href="javascript:void(0)" class="ytcc-sb-logout" id="ytcc_logout__RID__">로그아웃</a>
+    </div>
+  </div>
+
+  <div class="ytcc-sb-gap"></div>
+
+  <button class="ytcc-btn ytcc-btn-secondary" id="ytcc_newchat__RID__">새채팅</button>
+
+  __ACTIONS__
+
+</div>
+
+<style>
+  /* 이 블록(iframe) 안에서만 적용되는, 완전 독립 스타일 */
+  html, body { margin:0; padding:0; background:transparent; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans KR",Arial,sans-serif; }
+
+  .ytcc-sb-wrap{
+    width:100%;
+    box-sizing:border-box;
+  }
+
+  .ytcc-sb-title{
+    font-weight:800;
+    font-size: 1.55rem;
+    line-height: 1.15;
+    margin: 0 0 8px 0;
+    background: -webkit-linear-gradient(45deg, #4285F4, #9B72CB, #D96570, #F2A60C);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .ytcc-sb-title span{ font-weight:800; }
+
+  .ytcc-sb-userrow{
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap: 10px;
+    margin: 0;
+  }
+  .ytcc-sb-user{
+    font-size: 0.95rem;
+    font-weight: 700;
+    color:#111827;
+    line-height:1.25;
+    margin: 0;
+  }
+  .ytcc-sb-role{
+    font-size: 0.78rem;
+    font-weight: 600;
+    color:#6b7280;
+  }
+  .ytcc-sb-logout{
+    font-size: 0.78rem;
+    color: #6b7280;
+    text-decoration: underline;
+    font-weight: 600;
+    line-height:1.1;
+  }
+  .ytcc-sb-logout:hover{ color:#374151; }
+
+  .ytcc-sb-gap{ height: 10px; }
+
+  .ytcc-btn{
+    width:100%;
+    border-radius: 14px;
+    padding: 0.55rem 0.65rem;
+    font-size: 0.90rem;
+    font-weight: 750;
+    line-height: 1.1;
+    border: 1px solid #e5e7eb;
+    background: #ffffff;
+    color:#111827;
+    cursor:pointer;
+    box-sizing:border-box;
+  }
+  .ytcc-btn:hover{
+    background:#f9fafb;
+    border-color:#d1d5db;
+  }
+
+  .ytcc-btn-secondary{
+    background:#e8f0fe;
+    border-color:#d2e3fc;
+    color:#0052CC;
+  }
+  .ytcc-btn-secondary:hover{
+    background:#d2e3fc;
+    border-color:#c2d8f8;
+    color:#0041A3;
+  }
+
+  .ytcc-row{
+    display:flex;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .ytcc-row .ytcc-btn{ width: 50%; }
+
+  .ytcc-btn-success{
+    background:#eafaf1;
+    border-color:#cdeedb;
+    color:#127a3a;
+  }
+  .ytcc-btn-success:hover{
+    background:#d6f3e4;
+    border-color:#bfe8d3;
+    color:#0f6a32;
+  }
+
+  /* iframe 자체 높이로 공백 최소화 */
+  .ytcc-bottom-gap{ height: 4px; }
+</style>
+
+<script>
+(function(){
+  const P = window.parent;
+  const DOC = P.document;
+
+  function setParam(key, val){
+    try{
+      const url = new URL(P.location.href);
+      const sp = url.searchParams;
+      if(val === null || val === undefined || String(val).trim()===""){
+        sp.delete(key);
+      } else {
+        sp.set(key, val);
+      }
+      // 액션 재실행 방지 위해 hash는 유지
+      url.search = sp.toString();
+      P.location.href = url.toString();
+    }catch(e){
+      console.error(e);
+    }
+  }
+
+  // 액션 버튼들
+  const btnLogout = document.getElementById("ytcc_logout__RID__");
+  const btnNew = document.getElementById("ytcc_newchat__RID__");
+  const btnSave = document.getElementById("ytcc_save__RID__");
+  const btnPdf  = document.getElementById("ytcc_pdf__RID__");
+
+  if(btnLogout){
+    btnLogout.addEventListener("click", ()=>{ setParam("logout","1"); setParam("action", null); });
+  }
+  if(btnNew){
+    btnNew.addEventListener("click", ()=>{ setParam("action","new_chat"); });
+  }
+  if(btnSave){
+    btnSave.addEventListener("click", ()=>{ setParam("action","save_session"); });
+  }
+
+  // --- PDF 캡쳐 (대화창만 / 스크롤 끝까지) ---
+  function ensureScript(src, globalName){
+    return new Promise((resolve, reject)=>{
+      try{
+        if(globalName && P[globalName]) return resolve(true);
+        if(DOC.querySelector('script[data-ytcc-src="'+src+'"]')) return resolve(true);
+        const s = DOC.createElement("script");
+        s.src = src;
+        s.async = true;
+        s.setAttribute("data-ytcc-src", src);
+        s.onload = ()=>resolve(true);
+        s.onerror = ()=>reject(new Error("load failed: "+src));
+        DOC.head.appendChild(s);
+      }catch(e){ reject(e); }
+    });
+  }
+
+  async function captureToPdf(){
+    if(!btnPdf) return;
+    const original = btnPdf.innerText;
+    btnPdf.disabled = true;
+    btnPdf.innerText = "캡쳐중...";
+
+    try{
+      await ensureScript("https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js", "html2canvas");
+      await ensureScript("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js", "jspdf");
+
+      const msgs = Array.from(DOC.querySelectorAll('[data-testid="stChatMessage"]'));
+      if(!msgs.length){
+        alert("캡쳐할 대화가 없습니다.");
+        return;
+      }
+
+      // 첫 메시지 폭 기반으로 캡쳐 컨테이너 폭 확보 (우측 잘림 방지)
+      const r = msgs[0].getBoundingClientRect();
+      let capW = Math.max(1200, Math.min(1700, (r.width || 1200) + 160));
+
+      const tmp = DOC.createElement("div");
+      tmp.id = "ytcc_capture_tmp__RID__";
+      tmp.style.position = "absolute";
+      tmp.style.left = "0px";
+      tmp.style.top = "0px";
+      tmp.style.transform = "translateX(-24000px)";
+      tmp.style.width = capW + "px";
+      tmp.style.background = "#ffffff";
+      tmp.style.padding = "18px 22px";
+      tmp.style.borderRadius = "12px";
+      tmp.style.color = "#111827";
+      tmp.style.boxSizing = "border-box";
+      tmp.style.overflow = "visible";
+      tmp.style.overflowWrap = "anywhere";
+      tmp.style.wordBreak = "break-word";
+
+      const title = DOC.createElement("div");
+      title.style.fontSize = "14px";
+      title.style.fontWeight = "800";
+      title.style.marginBottom = "6px";
+      title.innerText = "유튜브 댓글분석: AI 챗봇 — 대화 캡쳐";
+      tmp.appendChild(title);
+
+      const meta = DOC.createElement("div");
+      meta.style.fontSize = "12px";
+      meta.style.color = "#6b7280";
+      meta.style.marginBottom = "10px";
+      meta.innerText = "생성일시: " + (new Date()).toLocaleString();
+      tmp.appendChild(meta);
+
+      msgs.forEach(m => tmp.appendChild(m.cloneNode(true)));
+      DOC.body.appendChild(tmp);
+
+      // 하위 요소 폭/줄바꿈 강제
+      tmp.querySelectorAll("*").forEach(el => {
+        el.style.boxSizing = "border-box";
+        el.style.maxWidth = "100%";
+        el.style.overflowWrap = "anywhere";
+        el.style.wordBreak = "break-word";
+      });
+
+      const canvas = await P.html2canvas(tmp, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+        logging: false,
+        windowWidth: capW,
+      });
+
+      DOC.body.removeChild(tmp);
+
+      const imgData = canvas.toDataURL("image/png");
+      const { jsPDF } = P.jspdf;
+
+      const pdf = new jsPDF("p", "pt", "a4");
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+
+      const imgWidth = pageWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+      let heightLeft = imgHeight;
+      let position = 0;
+
+      pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
+
+      pdf.save("__PDFNAME__.pdf");
+    }catch(err){
+      console.error(err);
+      alert("PDF 캡쳐 중 오류가 발생했습니다. 콘솔 로그를 확인해주세요.");
+    }finally{
+      btnPdf.disabled = false;
+      btnPdf.innerText = original;
+    }
+  }
+
+  if(btnPdf){
+    btnPdf.addEventListener("click", captureToPdf);
+  }
+})();
+</script>
+'''
+
+    actions_html = ""
+    if show_actions:
+        actions_html = r'''
+  <div class="ytcc-row">
+    <button class="ytcc-btn ytcc-btn-success" id="ytcc_save__RID__">세션저장</button>
+    <button class="ytcc-btn ytcc-btn-success" id="ytcc_pdf__RID__">PDF저장</button>
+  </div>
+  <div class="ytcc-bottom-gap"></div>
+'''
+    else:
+        actions_html = '<div class="ytcc-bottom-gap"></div>'
+
+    html_str = (tpl
+        .replace("__RID__", rid)
+        .replace("__DISP__", disp.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;"))
+        .replace("__ROLE__", role.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;"))
+        .replace("__ACTIONS__", actions_html.replace("__RID__", rid))
+        .replace("__PDFNAME__", safe_pdf)
+    )
+
+    st_html(html_str, height=210 if show_actions else 170)
+
 # endregion
 
 # region [Main Pipeline]
@@ -2135,62 +2388,50 @@ def run_followup_turn(user_query: str):
 # region [Main Execution]
 require_auth()
 
+# --- Sidebar actions (HTML controls -> query params) ---
+_qp = _qp_get()
+
+def _qp_first(val):
+    if val is None:
+        return None
+    if isinstance(val, (list, tuple)):
+        return val[0] if val else None
+    return val
+
+_auth_tok = _qp_first(_qp.get("auth"))
+_action = _qp_first(_qp.get("action"))
+
+if _action == "new_chat":
+    _reset_chat_only(keep_auth=True)
+    _qp_set(auth=_auth_tok)  # keep auth only
+    st.rerun()
+
+if _action == "save_session":
+    if st.session_state.get("chat") and st.session_state.get("last_csv"):
+        with st.spinner("세션 저장 중..."):
+            ok, result = save_current_session_to_github()
+        if ok:
+            st.session_state["_toast_msg"] = {"text": f"'{result}' 저장 완료!", "icon": "✅"}
+        else:
+            st.session_state["_toast_msg"] = {"text": str(result), "icon": "⚠️"}
+    _qp_set(auth=_auth_tok)  # keep auth only (and clear action)
+    st.rerun()
+
 with st.sidebar:
-    st.markdown('<h2 style="font-weight:600; font-size:1.6rem; margin-bottom:1.0rem; background:-webkit-linear-gradient(45deg, #4285F4, #9B72CB, #D96570, #F2A60C); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">💬 유튜브 댓글분석: AI 챗봇</h2>', unsafe_allow_html=True)
+    disp = st.session_state.get("auth_display_name", st.session_state.get("auth_user_id") or "사용자")
+    role = st.session_state.get("auth_role", "user")
 
-    # --- Auth info ---
-    if st.session_state.get("auth_user_id"):
-        disp = st.session_state.get("auth_display_name", st.session_state.get("auth_user_id"))
-        uid  = st.session_state.get("auth_user_id")
-        role = st.session_state.get("auth_role", "user")
+    show_actions = bool(st.session_state.get("chat") and st.session_state.get("last_csv"))
+    pdf_title = _session_title_for_pdf()
+    render_sidebar_controls_html(disp, role, show_actions, pdf_title)
 
-        u1, u2 = st.columns([0.78, 0.22])
-        with u1:
-            st.markdown(
-                f"**👤 {disp}**  <span style='color:#6b7280; font-size:12px;'>({role})</span>",
-                unsafe_allow_html=True,
-            )
-        with u2:
-            st.markdown('<div class="logout-link">', unsafe_allow_html=True)
-            if st.button("로그아웃", key="logout_btn"):
-                _logout_and_clear()
-                st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-
-
-    st.markdown("""<style>[data-testid="stSidebarUserContent"] {display: flex; flex-direction: column; height: calc(100vh - 4rem);} .sidebar-top-section { flex-grow: 1; overflow-y: auto; } .sidebar-bottom-section { flex-shrink: 0; }
-</style>""", unsafe_allow_html=True)
-
-    st.markdown('<div class="sidebar-top-section">', unsafe_allow_html=True)
-    st.markdown('<div class="new-chat-btn tight-btn">', unsafe_allow_html=True)
-    if st.button("새채팅", use_container_width=True, key="new_chat_btn"):
-        _reset_chat_only(keep_auth=True)
-        st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # 저장 / PDF (한 행)
-    if st.session_state.chat and st.session_state.last_csv:
-        c_save, c_pdf = st.columns([1, 1], gap="small")
-        with c_save:
-            st.markdown('<div class="save-chat-btn">', unsafe_allow_html=True)
-            if st.button("세션저장", use_container_width=True, key="save_session_btn"):
-                with st.spinner("세션 저장 중..."):
-                    success, result = save_current_session_to_github()
-                if success:
-                    st.success(f"'{result}' 저장 완료!")
-                    time.sleep(1.2)
-                    st.rerun()
-                else:
-                    st.error(result)
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        with c_pdf:
-            st.markdown('<div class="pdf-chat-btn">', unsafe_allow_html=True)
-            pdf_title = _session_title_for_pdf()
-            render_capture_pdf_button(pdf_title, label="PDF저장")
-            st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown('</div>', unsafe_allow_html=True)
+    # one-time toast (레이아웃 깨지지 않게 overlay 우선)
+    _t = st.session_state.pop("_toast_msg", None)
+    if _t and isinstance(_t, dict):
+        try:
+            st.toast(_t.get("text", ""), icon=_t.get("icon", ""))
+        except Exception:
+            st.caption(_t.get("text", ""))
 
     st.markdown("---")
     st.markdown("#### 대화 기록")
