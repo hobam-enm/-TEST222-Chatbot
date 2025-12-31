@@ -177,6 +177,144 @@ def ensure_state():
 ensure_state()
 # endregion
 
+# region [Auth: ID/PW in secrets.toml]
+import hmac
+import hashlib
+from typing import Dict, Optional
+
+def _load_auth_users_from_secrets() -> Dict[str, dict]:
+    """Load users from Streamlit secrets.
+
+    Supports:
+      - [[users]] ... at root
+      - [auth] ... with users list (depending on secrets layout)
+    """
+    users = []
+    try:
+        if "users" in st.secrets:
+            users = list(st.secrets.get("users") or [])
+        elif "auth" in st.secrets and isinstance(st.secrets.get("auth"), dict) and "users" in st.secrets["auth"]:
+            users = list(st.secrets["auth"].get("users") or [])
+    except Exception:
+        users = []
+
+    out = {}
+    for u in users:
+        if not isinstance(u, dict):
+            continue
+        uid = (u.get("id") or "").strip()
+        if not uid:
+            continue
+        out[uid] = u
+    return out
+
+def _get_auth_pepper() -> str:
+    try:
+        if "AUTH_PEPPER" in st.secrets:
+            return str(st.secrets.get("AUTH_PEPPER") or "")
+        if "auth" in st.secrets and isinstance(st.secrets.get("auth"), dict):
+            return str(st.secrets["auth"].get("pepper") or "")
+    except Exception:
+        pass
+    return ""
+
+def _pbkdf2_sha256_verify(password: str, encoded: str, pepper: str = "") -> bool:
+    """Verify 'pbkdf2_sha256$iters$salt_b64$dk_b64'"""
+    try:
+        parts = encoded.split("$")
+        if len(parts) != 4 or parts[0] != "pbkdf2_sha256":
+            return False
+        iters = int(parts[1])
+        salt = base64.b64decode(parts[2].encode("utf-8"))
+        expect = base64.b64decode(parts[3].encode("utf-8"))
+        dk = hashlib.pbkdf2_hmac("sha256", (password + pepper).encode("utf-8"), salt, iters, dklen=len(expect))
+        return hmac.compare_digest(dk, expect)
+    except Exception:
+        return False
+
+def verify_user_password(user_rec: dict, password: str) -> bool:
+    pepper = _get_auth_pepper()
+    pw_hash = (user_rec.get("pw_hash") or "").strip()
+
+    # Recommended: pbkdf2_sha256$iters$salt_b64$dk_b64
+    if pw_hash.startswith("pbkdf2_sha256$"):
+        return _pbkdf2_sha256_verify(password, pw_hash, pepper=pepper)
+
+    # Legacy fallback: plain 'pw'
+    pw_plain = user_rec.get("pw")
+    if isinstance(pw_plain, str) and pw_plain:
+        return hmac.compare_digest(pw_plain, password)
+
+    return False
+
+def get_current_user() -> Optional[dict]:
+    uid = st.session_state.get("auth_user_id")
+    users = st.session_state.get("_auth_users_cache") or _load_auth_users_from_secrets()
+    st.session_state["_auth_users_cache"] = users
+    return users.get(uid) if uid else None
+
+def is_authenticated() -> bool:
+    return bool(st.session_state.get("auth_ok") and st.session_state.get("auth_user_id"))
+
+def require_auth():
+    """Gate the app behind a login screen if users are configured in secrets."""
+    users = st.session_state.get("_auth_users_cache") or _load_auth_users_from_secrets()
+    st.session_state["_auth_users_cache"] = users
+    auth_enabled = bool(users)
+
+    if not auth_enabled:
+        return  # no users configured -> open access
+
+    if is_authenticated():
+        u = get_current_user() or {}
+        if u and (u.get("active") is False):
+            st.session_state.pop("auth_ok", None)
+            st.session_state.pop("auth_user_id", None)
+        else:
+            return
+
+    st.markdown(
+        '''
+        <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:75vh;">
+          <h1 style="font-size:2.4rem; font-weight:650;
+                     background:-webkit-linear-gradient(45deg,#4285F4,#9B72CB,#D96570,#F2A60C);
+                     -webkit-background-clip:text; -webkit-text-fill-color:transparent;">
+            🔐 로그인
+          </h1>
+          <p style="color:#6b7280; margin-top:0.25rem;">계정으로 로그인하면 개인별 대화 저장/불러오기가 가능합니다.</p>
+        </div>
+        ''',
+        unsafe_allow_html=True
+    )
+
+    c1, c2, c3 = st.columns([1.2, 1.0, 1.2])
+    with c2:
+        with st.form("login_form", clear_on_submit=False):
+            uid = st.text_input("ID", value="", placeholder="예: hobum")
+            pw = st.text_input("Password", value="", type="password", placeholder="비밀번호")
+            submitted = st.form_submit_button("로그인", use_container_width=True)
+
+        if submitted:
+            uid = (uid or "").strip()
+            rec = users.get(uid)
+            if (not rec) or rec.get("active") is False:
+                st.error("ID 또는 비밀번호가 올바르지 않습니다.")
+                st.stop()
+            if not verify_user_password(rec, pw):
+                st.error("ID 또는 비밀번호가 올바르지 않습니다.")
+                st.stop()
+
+            st.session_state["auth_ok"] = True
+            st.session_state["auth_user_id"] = uid
+            st.session_state["auth_role"] = rec.get("role", "user")
+            st.session_state["auth_display_name"] = rec.get("display_name", uid)
+            st.session_state["client_instance_id"] = st.session_state.get("client_instance_id") or uuid4().hex[:10]
+            st.rerun()
+
+    st.stop()
+# endregion
+
+
 
 # region [Helper Classes]
 class RotatingKeys:
@@ -395,8 +533,8 @@ def github_delete_folder(repo, branch, folder_path, token):
         data = {"message": f"delete: {item['name']}", "sha": item['sha'], "branch": branch}
         requests.delete(delete_url, headers=headers, json=data).raise_for_status()
 
-def github_rename_session(old_name, new_name, token):
-    contents_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/sessions/{old_name}?ref={GITHUB_BRANCH}"
+def github_rename_session(user_id: str, old_name: str, new_name: str, token):
+    contents_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/sessions/{user_id}/{old_name}?ref={GITHUB_BRANCH}"
     resp = requests.get(contents_url, headers=_gh_headers(token))
     resp.raise_for_status()
     files_to_move = resp.json()
@@ -406,9 +544,9 @@ def github_rename_session(old_name, new_name, token):
         local_path = os.path.join(SESS_DIR, filename)
         if not github_download_file(GITHUB_REPO, GITHUB_BRANCH, item['path'], token, local_path):
             raise Exception(f"Failed to download {filename} from {old_name}")
-        github_upload_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{new_name}/{filename}", local_path, token)
+        github_upload_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{new_name}/{filename}", local_path, token)
 
-    github_delete_folder(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{old_name}", token)
+    github_delete_folder(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{old_name}", token)
 
 def _build_session_name() -> str:
     if st.session_state.get("loaded_session_name"):
@@ -424,7 +562,8 @@ def save_current_session_to_github():
         return False, "저장할 데이터가 없거나 GitHub 설정이 누락되었습니다."
 
     sess_name = _build_session_name()
-    local_dir = os.path.join(SESS_DIR, sess_name)
+    user_id = st.session_state.get('auth_user_id') or 'public'
+    local_dir = os.path.join(SESS_DIR, user_id, sess_name)
     os.makedirs(local_dir, exist_ok=True)
 
     try:
@@ -444,10 +583,10 @@ def save_current_session_to_github():
         if st.session_state.last_df is not None:
             st.session_state.last_df.to_csv(videos_path, index=False, encoding="utf-8-sig")
 
-        github_upload_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{sess_name}/qa.json", meta_path, GITHUB_TOKEN)
-        github_upload_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{sess_name}/comments.csv", comments_path, GITHUB_TOKEN)
+        github_upload_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{sess_name}/qa.json", meta_path, GITHUB_TOKEN)
+        github_upload_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{sess_name}/comments.csv", comments_path, GITHUB_TOKEN)
         if os.path.exists(videos_path):
-            github_upload_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{sess_name}/videos.csv", videos_path, GITHUB_TOKEN)
+            github_upload_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{sess_name}/videos.csv", videos_path, GITHUB_TOKEN)
 
         st.session_state.loaded_session_name = sess_name
         return True, sess_name
@@ -458,10 +597,11 @@ def save_current_session_to_github():
 def load_session_from_github(sess_name: str):
     with st.spinner(f"세션 '{sess_name}' 불러오는 중..."):
         try:
-            local_dir = os.path.join(SESS_DIR, sess_name)
-            qa_ok = github_download_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{sess_name}/qa.json", GITHUB_TOKEN, os.path.join(local_dir, "qa.json"))
-            comments_ok = github_download_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{sess_name}/comments.csv", GITHUB_TOKEN, os.path.join(local_dir, "comments.csv"))
-            videos_ok = github_download_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{sess_name}/videos.csv", GITHUB_TOKEN, os.path.join(local_dir, "videos.csv"))
+            user_id = st.session_state.get('auth_user_id') or 'public'
+            local_dir = os.path.join(SESS_DIR, user_id, sess_name)
+            qa_ok = github_download_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{sess_name}/qa.json", GITHUB_TOKEN, os.path.join(local_dir, "qa.json"))
+            comments_ok = github_download_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{sess_name}/comments.csv", GITHUB_TOKEN, os.path.join(local_dir, "comments.csv"))
+            videos_ok = github_download_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{sess_name}/videos.csv", GITHUB_TOKEN, os.path.join(local_dir, "videos.csv"))
 
             if not (qa_ok and comments_ok):
                 st.error("세션 핵심 파일을 불러오는 데 실패했습니다.")
@@ -492,7 +632,8 @@ if 'session_to_load' in st.session_state:
 if 'session_to_delete' in st.session_state:
     sess_name = st.session_state.pop('session_to_delete')
     with st.spinner(f"세션 '{sess_name}' 삭제 중..."):
-        github_delete_folder(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{sess_name}", GITHUB_TOKEN)
+        user_id = st.session_state.get("auth_user_id") or "public"
+        github_delete_folder(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{sess_name}", GITHUB_TOKEN)
     st.success("세션 삭제 완료.")
     time.sleep(1)
     st.rerun()
@@ -502,7 +643,8 @@ if 'session_to_rename' in st.session_state:
     if old and new and old != new:
         with st.spinner("이름 변경 중..."):
             try:
-                github_rename_session(old, new, GITHUB_TOKEN)
+                user_id = st.session_state.get("auth_user_id") or "public"
+                github_rename_session(user_id, old, new, GITHUB_TOKEN)
                 st.success("이름 변경 완료!")
             except Exception as e:
                 st.error(f"변경 실패: {e}")
@@ -1258,16 +1400,31 @@ def run_followup_turn(user_query: str):
 
 
 # region [Main Execution]
+require_auth()
+
 with st.sidebar:
     st.markdown('<h2 style="font-weight:600; font-size:1.6rem; margin-bottom:1.5rem; background:-webkit-linear-gradient(45deg, #4285F4, #9B72CB, #D96570, #F2A60C); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">💬 유튜브 댓글분석: AI 챗봇</h2>', unsafe_allow_html=True)
     st.caption("문의: 미디어)디지털마케팅 데이터파트")
+
+    # --- Auth info ---
+    if st.session_state.get("auth_user_id"):
+        st.markdown(f"**👤 {st.session_state.get('auth_display_name', st.session_state.get('auth_user_id'))}** (`{st.session_state.get('auth_user_id')}`)")
+        if st.button("🚪 로그아웃", use_container_width=True):
+            # Keep caches minimal; full logout
+            st.session_state.clear()
+            ensure_state()
+            st.rerun()
+
 
     st.markdown("""<style>[data-testid="stSidebarUserContent"] {display: flex; flex-direction: column; height: calc(100vh - 4rem);} .sidebar-top-section { flex-grow: 1; overflow-y: auto; } .sidebar-bottom-section { flex-shrink: 0; }</style>""", unsafe_allow_html=True)
 
     st.markdown('<div class="sidebar-top-section">', unsafe_allow_html=True)
     st.markdown('<div class="new-chat-btn">', unsafe_allow_html=True)
     if st.button("✨ 새 채팅", use_container_width=True):
+        keep_keys = {k: st.session_state.get(k) for k in ["auth_ok","auth_user_id","auth_role","auth_display_name","client_instance_id","_auth_users_cache"] if k in st.session_state}
         st.session_state.clear()
+        st.session_state.update({k:v for k,v in keep_keys.items() if v is not None})
+        ensure_state()
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1288,7 +1445,8 @@ with st.sidebar:
         st.caption("GitHub 설정이 Secrets에 없습니다.")
     else:
         try:
-            sessions = sorted(github_list_dir(GITHUB_REPO, GITHUB_BRANCH, "sessions", GITHUB_TOKEN), reverse=True)
+            user_id = st.session_state.get("auth_user_id") or "public"
+            sessions = sorted(github_list_dir(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}", GITHUB_TOKEN), reverse=True)
             if not sessions: st.caption("저장된 기록이 없습니다.")
             else:
                 editing_session = st.session_state.get("editing_session", None)
