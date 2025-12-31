@@ -179,13 +179,19 @@ st.markdown(
 .save-chat-btn .stButton button,
 .pdf-chat-btn [data-testid="stDownloadButton"] button {
     margin-top: 0.0rem !important;
-    margin-bottom: 0.02rem !important;
-    padding-top: 0.35rem !important;
-    padding-bottom: 0.35rem !important;
-    font-size: 0.82rem !important;
+    margin-bottom: 0.0rem !important;
+    padding-top: 0.22rem !important;
+    padding-bottom: 0.22rem !important;
+    font-size: 0.72rem !important;
     line-height: 1.05 !important;
     white-space: nowrap !important;
 }
+
+
+/* ✅ 사이드바 전체 요소 간격 더 타이트하게 */
+[data-testid="stSidebar"] .element-container { margin: 0.02rem 0 !important; padding: 0 !important; }
+[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] { gap: 0.20rem !important; margin-top: -0.15rem !important; }
+[data-testid="stSidebar"] .new-chat-btn { margin-bottom: -0.25rem !important; }
 
 
   
@@ -307,6 +313,27 @@ def ensure_state():
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
+
+
+def _reset_chat_only(keep_auth: bool = True):
+    """전체 clear() 대신, 대화/분석 상태만 안전하게 초기화."""
+    auth_keys = {
+        "auth_ok", "auth_user_id", "auth_role", "auth_display_name",
+        "client_instance_id", "_auth_users_cache"
+    }
+    # 흐름 제어 키가 있다면 여기 유지(앱 내에서 사용 중이면)
+    safe_flow_keys = {"session_to_load", "session_to_delete"}
+    keep = set()
+    if keep_auth:
+        keep |= auth_keys
+    keep |= safe_flow_keys
+
+    for k in list(st.session_state.keys()):
+        if k in keep:
+            continue
+        del st.session_state[k]
+
+    ensure_state()
 
 ensure_state()
 # endregion
@@ -672,8 +699,7 @@ def _logout_and_clear():
     # Keep query params clean
     _qp_set()  # clears all
     # clear in-memory session
-    st.session_state.clear()
-    ensure_state()
+    _reset_chat_only(keep_auth=False)
 
 def require_auth():
     """Gate the app behind a login screen if users are configured in secrets.
@@ -1103,15 +1129,8 @@ def load_session_from_github(sess_name: str):
             if not (qa_ok and comments_ok):
                 st.error("세션 핵심 파일을 불러오는 데 실패했습니다.")
                 return
-
-            # 로그인 정보는 유지 (세션 로드 시 재로그인 방지)
-            keep_keys = {k: st.session_state.get(k) for k in [
-                "auth_ok","auth_user_id","auth_role","auth_display_name","client_instance_id","_auth_users_cache"
-            ] if k in st.session_state}
-
-            st.session_state.clear()
-            st.session_state.update({k:v for k,v in keep_keys.items() if v is not None})
-            ensure_state()
+            # 로그인 상태는 유지한 채로, 대화/분석 상태만 초기화
+            _reset_chat_only(keep_auth=True)
 
             with open(os.path.join(local_dir, "qa.json"), "r", encoding="utf-8") as f:
                 meta = json.load(f)
@@ -1931,8 +1950,6 @@ with st.sidebar:
         with u2:
             st.markdown('<div class="logout-inline"><a href="?logout=1">로그아웃</a></div>', unsafe_allow_html=True)
 
-        st.markdown(f"<div style='margin-top:0.1rem; margin-bottom:0.2rem;'><code>{uid}</code></div>", unsafe_allow_html=True)
-
 
 
     st.markdown("""<style>[data-testid="stSidebarUserContent"] {display: flex; flex-direction: column; height: calc(100vh - 4rem);} .sidebar-top-section { flex-grow: 1; overflow-y: auto; } .sidebar-bottom-section { flex-shrink: 0; }</style>""", unsafe_allow_html=True)
@@ -1940,10 +1957,7 @@ with st.sidebar:
     st.markdown('<div class="sidebar-top-section">', unsafe_allow_html=True)
     st.markdown('<div class="new-chat-btn tight-btn">', unsafe_allow_html=True)
     if st.button("새채팅", use_container_width=True):
-        keep_keys = {k: st.session_state.get(k) for k in ["auth_ok","auth_user_id","auth_role","auth_display_name","client_instance_id","_auth_users_cache"] if k in st.session_state}
-        st.session_state.clear()
-        st.session_state.update({k:v for k,v in keep_keys.items() if v is not None})
-        ensure_state()
+        _reset_chat_only(keep_auth=True)
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
