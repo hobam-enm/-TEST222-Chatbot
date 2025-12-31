@@ -4,13 +4,7 @@ import streamlit as st
 from io import BytesIO
 from functools import lru_cache
 
-# PDF export
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.lib.utils import simpleSplit
-
+# PDF export (lazy import inside functions)
 import pandas as pd
 import os
 import re
@@ -177,24 +171,39 @@ st.markdown(
       color: #374151 !important;
   }
 
-  /* 버튼 간격 타이트하게 */
-  .tight-btn .stButton button {
-      margin-top: 0.0rem !important;
-      margin-bottom: 0.05rem !important;
-  }
+  
+
+/* 버튼 간격/크기 타이트하게 (새채팅/세션저장/PDF저장) */
+.tight-btn .stButton button,
+.tight-btn [data-testid="stDownloadButton"] button,
+.save-chat-btn .stButton button,
+.pdf-chat-btn [data-testid="stDownloadButton"] button {
+    margin-top: 0.0rem !important;
+    margin-bottom: 0.02rem !important;
+    padding-top: 0.35rem !important;
+    padding-bottom: 0.35rem !important;
+    font-size: 0.82rem !important;
+    line-height: 1.05 !important;
+    white-space: nowrap !important;
+}
 
 
-  /* PDF 버튼 스타일 */
-  .pdf-chat-btn button {
-      background-color: #fff7ed;
-      color: #9a3412 !important;
-      border: 1px solid #fed7aa !important;
-  }
-  .pdf-chat-btn button:hover {
-      background-color: #ffedd5;
-      color: #7c2d12 !important;
-      border: 1px solid #fdba74 !important;
-  }
+  
+/* PDF 버튼 스타일 (세션저장과 동일) */
+.pdf-chat-btn button,
+.pdf-chat-btn [data-testid="stDownloadButton"] button,
+[data-testid="stSidebar"] [data-testid="stDownloadButton"] button {
+    background-color: #eafaf1 !important;
+    color: #127a3a !important;
+    border: 1px solid #cdeedb !important;
+}
+.pdf-chat-btn button:hover,
+.pdf-chat-btn [data-testid="stDownloadButton"] button:hover,
+[data-testid="stSidebar"] [data-testid="stDownloadButton"] button:hover {
+    background-color: #d6f3e4 !important;
+    color: #0f6a32 !important;
+    border: 1px solid #bfe8d3 !important;
+}
 
   /* 대화기록: 세션명을 텍스트처럼 */
   .session-list .sess-name .stButton button {
@@ -306,78 +315,183 @@ ensure_state()
 # region [PDF Export: current session -> PDF]
 @lru_cache(maxsize=1)
 def _pdf_font_name() -> str:
-    # Korean-capable fonts (common on Linux images)
+    """Return a registered font name for Korean text if available. Fallback: Helvetica."""
+    try:
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+    except ModuleNotFoundError:
+        return "Helvetica"
+
     candidates = [
-        ("/usr/share/fonts/truetype/unfonts-core/UnDotum.ttf", "KFONT_DOTUM"),
-        ("/usr/share/fonts/truetype/unfonts-core/UnBatang.ttf", "KFONT_BATANG"),
+        ("NanumGothic", "./fonts/NanumGothic.ttf"),
+        ("NanumGothic", "./NanumGothic.ttf"),
+        ("NanumGothic", "/usr/share/fonts/truetype/nanum/NanumGothic.ttf"),
+        ("NanumGothicCoding", "/usr/share/fonts/truetype/nanum/NanumGothicCoding.ttf"),
+        ("UnDotum", "/usr/share/fonts/truetype/unfonts-core/UnDotum.ttf"),
+        ("UnBatang", "/usr/share/fonts/truetype/unfonts-core/UnBatang.ttf"),
+        ("NotoSansCJKkr", "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+        ("NotoSansKR", "/usr/share/fonts/truetype/noto/NotoSansKR-Regular.ttf"),
     ]
-    for fp, name in candidates:
-        try:
-            if os.path.exists(fp):
-                pdfmetrics.registerFont(TTFont(name, fp))
+
+    for name, fp in candidates:
+        if os.path.exists(fp):
+            try:
+                # Avoid duplicate registration errors
+                if name not in pdfmetrics.getRegisteredFontNames():
+                    pdfmetrics.registerFont(TTFont(name, fp))
                 return name
-        except Exception:
-            pass
+            except Exception:
+                continue
     return "Helvetica"
 
+
+def _strip_html_to_text(s: str) -> str:
+    """Best-effort: convert HTML-ish strings to readable text for PDF."""
+    if not s:
+        return ""
+    # Common line breaks
+    s = re.sub(r"<\s*br\s*/?\s*>", "\n", s, flags=re.I)
+    s = re.sub(r"</\s*p\s*>", "\n\n", s, flags=re.I)
+    s = re.sub(r"<\s*li\s*>", "• ", s, flags=re.I)
+    s = re.sub(r"</\s*li\s*>", "\n", s, flags=re.I)
+    # Remove all tags
+    s = re.sub(r"<[^>]+>", "", s)
+    # Unescape entities
+    try:
+        import html as _html
+        s = _html.unescape(s)
+    except Exception:
+        pass
+    # Normalize whitespace
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    s = re.sub(r"\n{3,}", "\n\n", s).strip()
+    return s
+
+
 def build_session_pdf_bytes(session_title: str, user_label: str, chat: list) -> bytes:
+    """
+    Export the current session as a 'captured-like' chat PDF:
+    - user/assistant speech bubbles
+    - left/right alignment
+    - HTML tags stripped (so raw HTML won't leak into PDF)
+    """
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.utils import simpleSplit
+        from reportlab.lib.colors import HexColor
+    except ModuleNotFoundError:
+        return b""  # reportlab missing
+
     font = _pdf_font_name()
+
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     w, h = A4
-    left, right = 40, 40
-    y = h - 50
-    max_width = w - left - right
+
+    # Layout
+    margin_l, margin_r = 18 * 2.8346, 18 * 2.8346  # ~18mm
+    margin_t, margin_b = 18 * 2.8346, 18 * 2.8346
+    max_bubble_w = (w - margin_l - margin_r) * 0.78
+    pad_x, pad_y = 10, 8
+    line_h = 13
+
+    y = h - margin_t
 
     def new_page():
         nonlocal y
         c.showPage()
-        c.setFont(font, 11)
-        y = h - 50
+        y = h - margin_t
 
-    # Title
-    c.setFont(font, 16)
-    c.drawString(left, y, f"대화 기록: {session_title}")
-    y -= 22
-    c.setFont(font, 10)
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-    c.drawString(left, y, f"사용자: {user_label}   ·   생성: {ts}")
-    y -= 18
-    c.setFont(font, 11)
-
-    def draw_block(label: str, text: str):
+    def draw_title():
         nonlocal y
-        if y < 90:
+        c.setFont(font, 16)
+        c.drawString(margin_l, y, f"대화 기록: {session_title}")
+        y -= 22
+        c.setFont(font, 10)
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+        label = (user_label or "").strip()
+        c.drawString(margin_l, y, f"사용자: {label}   ·   생성: {ts}")
+        y -= 18
+        y -= 8
+
+    def draw_bubble(role: str, text: str):
+        nonlocal y
+        role = (role or "").lower()
+        is_user = role == "user"
+
+        # Colors
+        fill = HexColor("#EAFBF2") if is_user else HexColor("#F3F4F6")
+        stroke = HexColor("#CDEEDB") if is_user else HexColor("#E5E7EB")
+        text_color = HexColor("#0F172A")
+
+        # Clean text
+        t = _strip_html_to_text(text or "")
+        if not t:
+            t = " "
+
+        # Split lines by paragraphs then wrap
+        c.setFont(font, 10.5)
+        wrapped = []
+        for para in t.split("\n"):
+            if para.strip() == "":
+                wrapped.append("")
+                continue
+            wrapped.extend(simpleSplit(para, font, 10.5, max_bubble_w - pad_x * 2))
+        if not wrapped:
+            wrapped = [" "]
+
+        bubble_h = pad_y * 2 + line_h * len(wrapped) + 10  # +label space
+        # Page break if needed
+        if y - bubble_h < margin_b:
             new_page()
-        c.setFont(font, 11)
-        c.drawString(left, y, label)
-        y -= 14
 
-        c.setFont(font, 11)
-        lines = []
-        for para in (text or "").splitlines() or [""]:
-            lines.extend(simpleSplit(para, font, 11, max_width))
-            lines.append("")
-        if lines and lines[-1] == "":
-            lines.pop()
+        # Bubble width: fit to longest line (capped)
+        max_line_w = 0
+        for ln in wrapped:
+            try:
+                max_line_w = max(max_line_w, c.stringWidth(ln, font, 10.5))
+            except Exception:
+                pass
+        bubble_w = min(max_bubble_w, max(220, max_line_w + pad_x * 2))  # minimum width
 
-        for ln in lines:
-            if y < 60:
-                new_page()
-            c.drawString(left, y, ln)
-            y -= 14
+        x = (w - margin_r - bubble_w) if is_user else margin_l
 
-        y -= 10
+        # Draw label
+        c.setFillColor(HexColor("#64748B"))
+        c.setFont(font, 9)
+        who = "나" if is_user else "AI"
+        c.drawString(x + pad_x, y, who)
+        y -= 12
+
+        # Bubble rect
+        c.setFillColor(fill)
+        c.setStrokeColor(stroke)
+        c.roundRect(x, y - (bubble_h - 12), bubble_w, bubble_h - 12, 10, fill=1, stroke=1)
+
+        # Text
+        c.setFillColor(text_color)
+        c.setFont(font, 10.5)
+        tx = x + pad_x
+        ty = y - pad_y - 2
+        for ln in wrapped:
+            c.drawString(tx, ty, ln)
+            ty -= line_h
+
+        # Advance y
+        y = y - (bubble_h - 12) - 12
+
+    draw_title()
 
     for m in chat or []:
-        role = (m.get("role") or "").lower()
-        label = "USER" if role == "user" else "ASSISTANT"
-        draw_block(f"[{label}]", m.get("content", ""))
+        draw_bubble(m.get("role"), m.get("content", ""))
 
     c.save()
     return buf.getvalue()
 
+
 def _session_title_for_pdf() -> str:
+
     return st.session_state.get("loaded_session_name") or "현재대화"
 
 def _get_cached_session_pdf_bytes() -> bytes:
@@ -1825,7 +1939,7 @@ with st.sidebar:
 
     st.markdown('<div class="sidebar-top-section">', unsafe_allow_html=True)
     st.markdown('<div class="new-chat-btn tight-btn">', unsafe_allow_html=True)
-    if st.button("✨ 새 채팅", use_container_width=True):
+    if st.button("새채팅", use_container_width=True):
         keep_keys = {k: st.session_state.get(k) for k in ["auth_ok","auth_user_id","auth_role","auth_display_name","client_instance_id","_auth_users_cache"] if k in st.session_state}
         st.session_state.clear()
         st.session_state.update({k:v for k,v in keep_keys.items() if v is not None})
@@ -1835,11 +1949,10 @@ with st.sidebar:
 
     # 저장 / PDF (한 행)
     if st.session_state.chat and st.session_state.last_csv:
-        st.markdown('<div class="tight-btn">', unsafe_allow_html=True)
         c_save, c_pdf = st.columns([1, 1], gap="small")
         with c_save:
             st.markdown('<div class="save-chat-btn">', unsafe_allow_html=True)
-            if st.button("💾 현재 대화 저장", use_container_width=True):
+            if st.button("세션저장", use_container_width=True):
                 with st.spinner("세션 저장 중..."):
                     success, result = save_current_session_to_github()
                 if success:
@@ -1854,8 +1967,11 @@ with st.sidebar:
             st.markdown('<div class="pdf-chat-btn">', unsafe_allow_html=True)
             pdf_bytes = _get_cached_session_pdf_bytes()
             pdf_title = _session_title_for_pdf()
-            st.download_button(
-                "📄 PDF 저장",
+            if not pdf_bytes:
+                st.caption('PDF 기능 사용을 위해 reportlab 설치가 필요합니다.')
+            else:
+                st.download_button(
+                "PDF저장",
                 data=pdf_bytes,
                 file_name=f"{pdf_title}.pdf",
                 mime="application/pdf",
@@ -1866,6 +1982,8 @@ with st.sidebar:
         st.markdown('</div>', unsafe_allow_html=True)
 
 
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown("#### 대화 기록")
@@ -1918,8 +2036,7 @@ with st.sidebar:
                                         st.session_state.session_to_delete = sess
                                         st.rerun()
                             st.markdown('</div>', unsafe_allow_html=True)
-                        if c2.button("✏️", key=f"edit_{sess}"):
-                            st.session_state.editing_session = sess
+                            st.session_state.session_to_delete = sess
                             st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
         except Exception: st.error("기록 로딩 실패")
