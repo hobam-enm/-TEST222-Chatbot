@@ -1893,7 +1893,7 @@ def render_sidebar_controls_html(display_name: str, role: str, show_actions: boo
 
   .ytcc-sb-title{
     font-weight:800;
-    font-size: clamp(1.05rem, 1.4vw, 1.40rem);
+    font-size: clamp(1.05rem, 1.7vw, 1.50rem);
     line-height: 1.15;
     margin: 0 0 8px 0;
     background: -webkit-linear-gradient(45deg, #4285F4, #9B72CB, #D96570, #F2A60C);
