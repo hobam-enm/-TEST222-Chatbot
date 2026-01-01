@@ -4,6 +4,7 @@ import streamlit as st
 from io import BytesIO
 from functools import lru_cache
 
+# PDF export (lazy import inside functions)
 import pandas as pd
 import os
 import re
@@ -176,41 +177,6 @@ GLOBAL_CSS = r'''
   [data-testid="stChatMessage"]:has(span[data-testid="chat-avatar-assistant"]) li{
     font-size: 0.95rem;
   }
-
-/* ===== Sidebar header (title/user) ===== */
-.ytcc-sb-title{
-  font-weight: 800;
-  font-size: clamp(1.12rem, 1.9vw, 1.45rem);
-  line-height: 1.10;
-  margin: 0 0 8px 0 !important;
-  padding: 0 !important;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  word-break: keep-all;
-  background: -webkit-linear-gradient(45deg, #4285F4, #9B72CB, #D96570, #F2A60C);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-.ytcc-sb-title span{ font-weight: 800; }
-.ytcc-sb-user{
-  font-size: 0.95rem;
-  font-weight: 700;
-  color:#111827;
-  line-height: 1.2;
-  margin: 0 !important;
-  padding: 0 !important;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  word-break: keep-all;
-}
-.ytcc-sb-role{
-  font-size: 0.78rem;
-  font-weight: 600;
-  color:#6b7280;
-}
-.ytcc-sb-tightgap{ height: 8px; }
 </style>
 '''
 st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
@@ -687,8 +653,6 @@ def require_auth():
     qp = _qp_get()
     if "logout" in qp:
         _logout_and_clear()
-        st.rerun()
-        st.stop()
 
     # Already authenticated in this session?
     if is_authenticated():
@@ -730,7 +694,11 @@ def require_auth():
         st.markdown(
             """
             <div style="text-align:center;">
-              <h1 style="font-size:clamp(1.25rem, 2.4vw, 1.75rem); font-weight:700; margin:0; line-height:1.05; white-space:nowrap; word-break:keep-all; background:-webkit-linear-gradient(45deg,#4285F4,#9B72CB,#D96570,#F2A60C); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">💬 유튜브 댓글분석: AI 챗봇</h1>
+              <h1 style="font-size:2.0rem; font-weight:700; margin:0;
+                         background:-webkit-linear-gradient(45deg,#4285F4,#9B72CB,#D96570,#F2A60C);
+                         -webkit-background-clip:text; -webkit-text-fill-color:transparent;">
+                💬 유튜브 댓글분석: AI 챗봇
+              </h1>
             </div>
             """,
             unsafe_allow_html=True,
@@ -1677,11 +1645,7 @@ def render_capture_pdf_button(file_basename: str, label: str = "PDF저장"):
               await ensureScript("https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js", "html2canvas");
               await ensureScript("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js", "jspdf");
 
-              const ROOT = DOC.querySelector('section.main') || DOC;
-              let msgs = Array.from(ROOT.querySelectorAll('[data-testid="stChatMessage"]'));
-              if (!msgs.length) msgs = Array.from(ROOT.querySelectorAll('.stChatMessage'));
-              if (!msgs.length) msgs = Array.from(ROOT.querySelectorAll('[data-testid="chatMessage"]'));
-              if (!msgs.length) msgs = Array.from(ROOT.querySelectorAll('[data-testid="chat-message"]'));
+              const msgs = Array.from(DOC.querySelectorAll('[data-testid="stChatMessage"]'));
               if (!msgs.length) {{
                 alert("캡쳐할 대화가 없습니다.");
                 return;
@@ -1871,77 +1835,357 @@ def render_chat():
                 st.markdown(content)
 
 
-def inject_sidebar_button_styles():
-    """사이드바 Streamlit 버튼(새채팅/세션저장/로그아웃)을 CSS 충돌 없이 '텍스트 기반'으로 스타일 고정.
+def render_sidebar_controls_html(display_name: str, role: str, show_actions: bool, pdf_basename: str):
+    """사이드바 상단 UI를 Streamlit 위젯이 아니라 '단일 HTML 블록'으로 렌더링한다.
 
-    - Streamlit 위젯은 key로 DOM을 안정적으로 타겟팅하기 어려워서,
-      사이드바 내부 버튼의 텍스트(label)를 기준으로 인라인 스타일을 적용한다.
-    - 페이지 리로드/쿼리파라미터 네비게이션을 쓰지 않으므로, 세션 상태가 유지된다.
+    - Streamlit은 마크다운 HTML로 위젯을 감쌀 수 없어서(=CSS가 안 먹음),
+      상단 컨트롤(로그아웃/새채팅/세션저장/PDF저장)을 하나의 HTML로 묶어 스타일/간격을 완전 고정한다.
+    - 새채팅/세션저장/로그아웃은 query param으로 액션을 전달해 서버에서 처리한다.
+    - PDF저장은 클라이언트에서 대화 DOM을 캡쳐해 PDF로 저장한다.
     """
-    st_html(r'''
-    <script>
-    (function(){
-      const P = (function(){
-        try{ let w=window; while(w.parent && w.parent!==w) w=w.parent; return w; }catch(e){ return window.parent; }
-      })();
-      const DOC = P.document;
 
-      function apply(label, styles){
-        try{
-          const btns = Array.from(DOC.querySelectorAll('[data-testid="stSidebar"] button'));
-          btns.forEach(b=>{
-            const t = (b.innerText || "").trim();
-            if(t === label){
-              for(const [k,v] of Object.entries(styles||{})){
-                try{ b.style[k] = v; }catch(e){}
-              }
-            }
-          });
-        }catch(e){}
+    disp = (display_name or "").strip() or "사용자"
+    role = (role or "user").strip() or "user"
+
+    safe_pdf = re.sub(r'[\\/:*?"<>|]+', "_", (pdf_basename or "chat")).strip()
+    safe_pdf = re.sub(r"\s+", "_", safe_pdf) or "chat"
+
+    # iframe 내부에서만 쓰는 랜덤 id
+    rid = uuid4().hex[:8]
+
+    tpl = r'''
+<div class="ytcc-sb-wrap" id="ytcc_sb__RID__">
+  <div class="ytcc-sb-title">💬 유튜브 댓글분석: <span>AI 챗봇</span></div>
+
+  <div class="ytcc-sb-userrow">
+    <div class="ytcc-sb-userleft">
+      <div class="ytcc-sb-user">👤 __DISP__ <span class="ytcc-sb-role">(__ROLE__)</span></div>
+    </div>
+    <div class="ytcc-sb-userright">
+      <a href="javascript:void(0)" class="ytcc-sb-logout" id="ytcc_logout__RID__">로그아웃</a>
+    </div>
+  </div>
+
+  <div class="ytcc-sb-gap"></div>
+
+  <button class="ytcc-btn ytcc-btn-secondary" id="ytcc_newchat__RID__">새채팅</button>
+
+  __ACTIONS__
+
+</div>
+
+<style>
+  /* 이 블록(iframe) 안에서만 적용되는, 완전 독립 스타일 */
+  html, body { margin:0; padding:0; background:transparent; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans KR",Arial,sans-serif; }
+
+  .ytcc-sb-wrap{
+    width:100%;
+    box-sizing:border-box;
+  }
+
+  .ytcc-sb-title{
+    font-weight:800;
+    font-size: 1.55rem;
+    line-height: 1.15;
+    margin: 0 0 8px 0;
+    background: -webkit-linear-gradient(45deg, #4285F4, #9B72CB, #D96570, #F2A60C);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .ytcc-sb-title span{ font-weight:800; }
+
+  .ytcc-sb-userrow{
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap: 10px;
+    margin: 0;
+  }
+  .ytcc-sb-user{
+    font-size: 0.95rem;
+    font-weight: 700;
+    color:#111827;
+    line-height:1.25;
+    margin: 0;
+  }
+  .ytcc-sb-role{
+    font-size: 0.78rem;
+    font-weight: 600;
+    color:#6b7280;
+  }
+  .ytcc-sb-logout{
+    font-size: 0.78rem;
+    color: #6b7280;
+    text-decoration: underline;
+    font-weight: 600;
+    line-height:1.1;
+  }
+  .ytcc-sb-logout:hover{ color:#374151; }
+
+  .ytcc-sb-gap{ height: 10px; }
+
+  .ytcc-btn{
+    width:100%;
+    border-radius: 14px;
+    padding: 0.55rem 0.65rem;
+    font-size: 0.90rem;
+    font-weight: 750;
+    line-height: 1.1;
+    border: 1px solid #e5e7eb;
+    background: #ffffff;
+    color:#111827;
+    cursor:pointer;
+    box-sizing:border-box;
+  }
+  .ytcc-btn:hover{
+    background:#f9fafb;
+    border-color:#d1d5db;
+  }
+
+  .ytcc-btn-secondary{
+    background:#e8f0fe;
+    border-color:#d2e3fc;
+    color:#0052CC;
+  }
+  .ytcc-btn-secondary:hover{
+    background:#d2e3fc;
+    border-color:#c2d8f8;
+    color:#0041A3;
+  }
+
+  .ytcc-row{
+    display:flex;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .ytcc-row .ytcc-btn{ width: 50%; }
+
+  .ytcc-btn-success{
+    background:#eafaf1;
+    border-color:#cdeedb;
+    color:#127a3a;
+  }
+  .ytcc-btn-success:hover{
+    background:#d6f3e4;
+    border-color:#bfe8d3;
+    color:#0f6a32;
+  }
+
+  /* iframe 자체 높이로 공백 최소화 */
+  .ytcc-bottom-gap{ height: 4px; }
+</style>
+
+<script>
+(function(){
+  // ✅ Streamlit components iframe 깊이에 상관없이 최상위(같은 origin) window 찾기
+  const P = (function(){
+    try{
+      let w = window;
+      while (w.parent && w.parent !== w) w = w.parent;
+      return w;
+    }catch(e){
+      return window.parent;
+    }
+  })();
+  const DOC = P.document;
+
+  // ✅ 한 번에 query param 세팅/삭제 후, 같은 창에서 확실히 리로드
+  function navigate(setObj, delKeys){
+    try{
+      const url = new URL(P.location.href);
+      const sp = url.searchParams;
+
+      (delKeys || []).forEach(k => { try{ sp.delete(k); }catch(e){} });
+      Object.entries(setObj || {}).forEach(([k,v])=>{
+        if(v === null || v === undefined || String(v).trim()===""){
+          sp.delete(k);
+        } else {
+          sp.set(k, v);
+        }
+      });
+
+      url.search = sp.toString();
+
+      // 1) URL만 교체(동일 페이지) → 2) 리로드 (sandbox/top-nav 제약 회피에 유리)
+      try{
+        P.history.replaceState(null, "", url.toString());
+        P.location.reload();
+        return;
+      }catch(e){}
+
+      // fallback
+      try{ P.location.assign(url.toString()); return; }catch(e){}
+      try{ P.location.href = url.toString(); }catch(e){}
+    }catch(e){
+      console.error(e);
+    }
+  }
+
+  // 액션 버튼들
+  const btnLogout = document.getElementById("ytcc_logout__RID__");
+  const btnNew = document.getElementById("ytcc_newchat__RID__");
+  const btnSave = document.getElementById("ytcc_save__RID__");
+  const btnPdf  = document.getElementById("ytcc_pdf__RID__");
+
+  if(btnLogout){
+    btnLogout.addEventListener("click", ()=>{ navigate({logout:"1"}, ["action"]); });
+  }
+  if(btnNew){
+    btnNew.addEventListener("click", ()=>{ navigate({action:"new_chat"}, ["logout"]); });
+  }
+  if(btnSave){
+    btnSave.addEventListener("click", ()=>{ navigate({action:"save_session"}, ["logout"]); });
+  }
+
+  // --- PDF 캡쳐 (대화창만 / 스크롤 끝까지) ---
+  function ensureScript(src, globalName){
+    return new Promise((resolve, reject)=>{
+      try{
+        if(globalName && P[globalName]) return resolve(true);
+        if(DOC.querySelector('script[data-ytcc-src="'+src+'"]')) return resolve(true);
+        const s = DOC.createElement("script");
+        s.src = src;
+        s.async = true;
+        s.setAttribute("data-ytcc-src", src);
+        s.onload = ()=>resolve(true);
+        s.onerror = ()=>reject(new Error("load failed: "+src));
+        DOC.head.appendChild(s);
+      }catch(e){ reject(e); }
+    });
+  }
+
+  async function captureToPdf(){
+    if(!btnPdf) return;
+    const original = btnPdf.innerText;
+    btnPdf.disabled = true;
+    btnPdf.innerText = "캡쳐중...";
+
+    try{
+      await ensureScript("https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js", "html2canvas");
+      await ensureScript("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js", "jspdf");
+
+      const msgs = Array.from(DOC.querySelectorAll('[data-testid="stChatMessage"]'));
+      if(!msgs.length){
+        alert("캡쳐할 대화가 없습니다.");
+        return;
       }
 
-      // 새채팅: 파란 톤 (기존 느낌 유지)
-      apply("새채팅", {
-        borderRadius: "14px",
-        padding: "0.55rem 0.65rem",
-        fontSize: "0.90rem",
-        fontWeight: "750",
-        lineHeight: "1.1",
-        border: "1px solid #d2e3fc",
-        background: "#e8f0fe",
-        color: "#0052CC",
-        width: "100%"
+      // 첫 메시지 폭 기반으로 캡쳐 컨테이너 폭 확보 (우측 잘림 방지)
+      const r = msgs[0].getBoundingClientRect();
+      let capW = Math.max(1200, Math.min(1700, (r.width || 1200) + 160));
+
+      const tmp = DOC.createElement("div");
+      tmp.id = "ytcc_capture_tmp__RID__";
+      tmp.style.position = "absolute";
+      tmp.style.left = "0px";
+      tmp.style.top = "0px";
+      tmp.style.transform = "translateX(-24000px)";
+      tmp.style.width = capW + "px";
+      tmp.style.background = "#ffffff";
+      tmp.style.padding = "18px 22px";
+      tmp.style.borderRadius = "12px";
+      tmp.style.color = "#111827";
+      tmp.style.boxSizing = "border-box";
+      tmp.style.overflow = "visible";
+      tmp.style.overflowWrap = "anywhere";
+      tmp.style.wordBreak = "break-word";
+
+      const title = DOC.createElement("div");
+      title.style.fontSize = "14px";
+      title.style.fontWeight = "800";
+      title.style.marginBottom = "6px";
+      title.innerText = "유튜브 댓글분석: AI 챗봇 — 대화 캡쳐";
+      tmp.appendChild(title);
+
+      const meta = DOC.createElement("div");
+      meta.style.fontSize = "12px";
+      meta.style.color = "#6b7280";
+      meta.style.marginBottom = "10px";
+      meta.innerText = "생성일시: " + (new Date()).toLocaleString();
+      tmp.appendChild(meta);
+
+      msgs.forEach(m => tmp.appendChild(m.cloneNode(true)));
+      DOC.body.appendChild(tmp);
+
+      // 하위 요소 폭/줄바꿈 강제
+      tmp.querySelectorAll("*").forEach(el => {
+        el.style.boxSizing = "border-box";
+        el.style.maxWidth = "100%";
+        el.style.overflowWrap = "anywhere";
+        el.style.wordBreak = "break-word";
       });
 
-      // 세션저장: 그린 톤
-      apply("세션저장", {
-        borderRadius: "14px",
-        padding: "0.55rem 0.65rem",
-        fontSize: "0.90rem",
-        fontWeight: "750",
-        lineHeight: "1.1",
-        border: "1px solid #cdeedb",
-        background: "#eafaf1",
-        color: "#127a3a",
-        width: "100%"
+      const canvas = await P.html2canvas(tmp, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+        logging: false,
+        windowWidth: capW,
       });
 
-      // 로그아웃: 텍스트 링크 형태
-      apply("로그아웃", {
-        background: "transparent",
-        border: "none",
-        padding: "0",
-        margin: "0",
-        boxShadow: "none",
-        color: "#6b7280",
-        textDecoration: "underline",
-        fontSize: "0.78rem",
-        fontWeight: "600",
-        width: "auto"
-      });
-    })();
-    </script>
-    ''', height=0)
+      DOC.body.removeChild(tmp);
+
+      const imgData = canvas.toDataURL("image/png");
+      const { jsPDF } = P.jspdf;
+
+      const pdf = new jsPDF("p", "pt", "a4");
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+
+      const imgWidth = pageWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+      let heightLeft = imgHeight;
+      let position = 0;
+
+      pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
+
+      pdf.save("__PDFNAME__.pdf");
+    }catch(err){
+      console.error(err);
+      alert("PDF 캡쳐 중 오류가 발생했습니다. 콘솔 로그를 확인해주세요.");
+    }finally{
+      btnPdf.disabled = false;
+      btnPdf.innerText = original;
+    }
+  }
+
+  if(btnPdf){
+    btnPdf.addEventListener("click", captureToPdf);
+  }
+})();
+</script>
+'''
+
+    actions_html = ""
+    if show_actions:
+        actions_html = r'''
+  <div class="ytcc-row">
+    <button class="ytcc-btn ytcc-btn-success" id="ytcc_save__RID__">세션저장</button>
+    <button class="ytcc-btn ytcc-btn-success" id="ytcc_pdf__RID__">PDF저장</button>
+  </div>
+  <div class="ytcc-bottom-gap"></div>
+'''
+    else:
+        actions_html = '<div class="ytcc-bottom-gap"></div>'
+
+    html_str = (tpl
+        .replace("__RID__", rid)
+        .replace("__DISP__", disp.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;"))
+        .replace("__ROLE__", role.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;"))
+        .replace("__ACTIONS__", actions_html.replace("__RID__", rid))
+        .replace("__PDFNAME__", safe_pdf)
+    )
+
+    st_html(html_str, height=210 if show_actions else 170)
 
 # endregion
 
@@ -2168,55 +2412,42 @@ def run_followup_turn(user_query: str):
 # region [Main Execution]
 require_auth()
 
+# --- Sidebar actions (HTML controls -> query params) ---
+_qp = _qp_get()
+
+def _qp_first(val):
+    if val is None:
+        return None
+    if isinstance(val, (list, tuple)):
+        return val[0] if val else None
+    return val
+
+_auth_tok = _qp_first(_qp.get("auth"))
+_action = _qp_first(_qp.get("action"))
+
+if _action == "new_chat":
+    _reset_chat_only(keep_auth=True)
+    _qp_set(auth=_auth_tok)  # keep auth only
+    st.rerun()
+
+if _action == "save_session":
+    if st.session_state.get("chat") and st.session_state.get("last_csv"):
+        with st.spinner("세션 저장 중..."):
+            ok, result = save_current_session_to_github()
+        if ok:
+            st.session_state["_toast_msg"] = {"text": f"'{result}' 저장 완료!", "icon": "✅"}
+        else:
+            st.session_state["_toast_msg"] = {"text": str(result), "icon": "⚠️"}
+    _qp_set(auth=_auth_tok)  # keep auth only (and clear action)
+    st.rerun()
 
 with st.sidebar:
     disp = st.session_state.get("auth_display_name", st.session_state.get("auth_user_id") or "사용자")
     role = st.session_state.get("auth_role", "user")
 
-    # ✅ 사이드바 타이틀/유저 (한 줄 고정 + 가변 크기)
-    st.markdown(
-        '<div class="ytcc-sb-title">💬 유튜브 댓글분석: <span>AI 챗봇</span></div>',
-        unsafe_allow_html=True
-    )
-
-    u1, u2 = st.columns([0.74, 0.26], gap="small")
-    with u1:
-        st.markdown(
-            f'<div class="ytcc-sb-user">👤 {disp} <span class="ytcc-sb-role">({role})</span></div>',
-            unsafe_allow_html=True
-        )
-    with u2:
-        if st.button("로그아웃", key="ytcc_logout_btn"):
-            _logout_and_clear()
-            st.rerun()
-
-    st.markdown('<div class="ytcc-sb-tightgap"></div>', unsafe_allow_html=True)
-
-    # ✅ 새 채팅 (세션 유지, 상태만 초기화)
-    if st.button("새채팅", key="ytcc_newchat_btn", use_container_width=True):
-        _reset_chat_only(keep_auth=True)
-        st.rerun()
-
-    # ✅ 액션 영역: 세션저장(서버) + PDF저장(캡쳐)
     show_actions = bool(st.session_state.get("chat") and st.session_state.get("last_csv"))
     pdf_title = _session_title_for_pdf()
-
-    if show_actions:
-        c1, c2 = st.columns(2, gap="small")
-        with c1:
-            if st.button("세션저장", key="ytcc_save_btn", use_container_width=True):
-                with st.spinner("세션 저장 중..."):
-                    ok, result = save_current_session_to_github()
-                if ok:
-                    st.session_state["_toast_msg"] = {"text": f"'{result}' 저장 완료!", "icon": "✅"}
-                else:
-                    st.session_state["_toast_msg"] = {"text": str(result), "icon": "⚠️"}
-                st.rerun()
-        with c2:
-            render_capture_pdf_button(pdf_title, label="PDF저장")
-
-    # 버튼 스타일을 텍스트 기반으로 고정 (레이아웃 깨짐 방지)
-    inject_sidebar_button_styles()
+    render_sidebar_controls_html(disp, role, show_actions, pdf_title)
 
     # one-time toast (레이아웃 깨지지 않게 overlay 우선)
     _t = st.session_state.pop("_toast_msg", None)
@@ -2225,6 +2456,7 @@ with st.sidebar:
             st.toast(_t.get("text", ""), icon=_t.get("icon", ""))
         except Exception:
             st.caption(_t.get("text", ""))
+
     st.markdown("---")
     st.markdown("#### 대화 기록")
 
