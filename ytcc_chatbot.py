@@ -68,7 +68,6 @@ def kst_to_rfc3339_utc(dt_kst: datetime) -> str:
 # endregion
 
 
-
 # region [Page Config & CSS]
 st.set_page_config(
     page_title="(테스트)유튜브 댓글분석: 챗봇",
@@ -88,187 +87,173 @@ GLOBAL_CSS = r"""
     max-width: 1200px;
   }
 
-  /* ===== Sidebar Layout & Spacing Control ===== */
+  /* ===== Sidebar Layout & EXTREME Spacing Control ===== */
   [data-testid="stSidebar"]{
-    background-color: #f9fafb; /* Very light gray */
+    background-color: #f9fafb;
     border-right: 1px solid #e5e7eb;
   }
   [data-testid="stSidebarUserContent"] {
-    padding: 1.2rem 1rem !important;
+    padding: 1rem 0.8rem !important; /* 전체 패딩 축소 */
   }
   
-  /* [핵심] 사이드바 내부 요소 간격 강제 축소 */
+  /* [핵심] 사이드바 내부 요소 간격 초강력 축소 */
+  [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+    gap: 0rem !important; /* 블록 간격 0 */
+  }
   [data-testid="stSidebar"] .element-container {
-    margin-bottom: 0px !important; /* 기본 마진 제거 */
-    padding-bottom: 6px !important; /* 픽셀 단위 간격 조정 */
+    margin-bottom: 0.3rem !important; /* 요소 하단 여백 최소화 */
   }
-  /* 컬럼 내부 간격도 제거 */
-  [data-testid="stSidebar"] div[data-testid="column"] {
-    gap: 4px !important;
+  /* 컬럼 내부 간격 제거 */
+  [data-testid="stSidebar"] [data-testid="column"] {
+    padding: 0 !important;
   }
-  
+
   /* Sidebar Titles */
   .ytcc-sb-title{
     font-family: 'Helvetica Neue', sans-serif;
     font-weight: 800;
-    font-size: 1.3rem;
-    margin-bottom: 1.0rem;
+    font-size: 1.25rem;
+    margin-bottom: 0.8rem;
     background: linear-gradient(90deg, #4285F4, #DB4437, #F4B400, #0F9D58);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     letter-spacing: -0.5px;
+    white-space: nowrap; /* [수정] 줄바꿈 절대 방지 */
   }
 
-  /* User Profile Area (Compact) */
-  .ytcc-user-row {
+  /* User Profile Row (Flexbox for alignment) */
+  .user-row-container {
     display: flex;
     justify-content: space-between;
-    align-items: flex-end; /* 텍스트 베이스라인 정렬 */
-    padding: 0 4px 12px 4px;
+    align-items: center; /* 수직 중앙 정렬 */
+    padding-bottom: 10px;
     border-bottom: 1px solid #e5e7eb;
-    margin-bottom: 12px;
+    margin-bottom: 10px !important;
   }
-  .ytcc-user-info {
+  .user-info-text {
     font-size: 0.85rem;
     font-weight: 700;
     color: #374151;
-    line-height: 1.2;
+    white-space: nowrap;
   }
-  .ytcc-user-role {
+  .user-role-text {
     font-size: 0.75rem;
     color: #9ca3af;
     font-weight: 500;
+    margin-left: 4px;
   }
 
-  /* Logout Button (Small Text Link Style) */
-  .ytcc-logout-text button {
+  /* Logout Button as Text Link (No Box) */
+  .logout-btn-area button {
     background: transparent !important;
     border: none !important;
     box-shadow: none !important;
     padding: 0 !important;
-    color: #9ca3af !important; /* role 색상과 통일 */
-    font-size: 0.75rem !important; /* role 크기와 통일 */
+    color: #6b7280 !important;
+    font-size: 0.75rem !important;
     text-decoration: underline;
-    line-height: 1 !important;
     margin: 0 !important;
     height: auto !important;
     min-height: auto !important;
+    line-height: 1.5 !important;
+    float: right;
   }
-  .ytcc-logout-text button:hover {
+  .logout-btn-area button:hover {
     color: #ef4444 !important;
     text-decoration: none;
   }
 
-  /* ===== Refined Buttons (Apple Style) ===== */
-  /* 기본 버튼 초기화 및 공통 스타일 */
-  .stButton button {
-    border-radius: 8px !important;
-    font-weight: 600 !important;
-    font-size: 0.82rem !important;
-    padding: 0.35rem 0.5rem !important; /* 패딩 축소 */
-    min-height: unset !important;
-    transition: all 0.15s ease !important;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.05) !important;
-  }
-
-  /* 1. New Chat (Primary - Dark) */
-  .new-chat-btn .stButton button {
-    background-color: #1f2937 !important;
-    color: white !important;
-    border: 1px solid #1f2937 !important;
-    width: 100%;
-    margin-top: 4px; /* 살짝 띄움 */
-  }
-  .new-chat-btn .stButton button:hover {
-    background-color: #374151 !important;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1) !important;
-  }
-
-  /* 2. Secondary Buttons (White/Gray) */
-  .save-chat-btn .stButton button, 
-  .ytcc-cap-btn { 
+  /* ===== Unified Button Style (Modern Flat White) ===== */
+  /* 모든 버튼(Streamlit & Custom PDF) 스타일 통일 */
+  .stButton button, .ytcc-cap-btn {
     background-color: #ffffff !important;
     border: 1px solid #e5e7eb !important;
-    color: #4b5563 !important;
-    width: 100%;
+    border-radius: 8px !important;
+    color: #374151 !important;
+    font-weight: 600 !important;
+    font-size: 0.82rem !important;
+    padding: 0.4rem 0.5rem !important;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03) !important;
+    width: 100% !important;
+    transition: all 0.1s ease !important;
+    box-sizing: border-box !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
   }
-  .save-chat-btn .stButton button:hover,
-  .ytcc-cap-btn:hover {
+
+  /* Hover Effect */
+  .stButton button:hover, .ytcc-cap-btn:hover {
     background-color: #f9fafb !important;
     border-color: #d1d5db !important;
     color: #111827 !important;
   }
-  .save-chat-btn .stButton button:disabled {
-    background-color: #f3f4f6 !important;
-    color: #d1d5db !important;
-    border-color: transparent !important;
-    box-shadow: none !important;
+  
+  /* Primary Action (New Chat) - Slightly Darker Text/Border for differentiation? No, requested clean */
+  .new-chat-btn .stButton button {
+    border-color: #d1d5db !important; /* 조금 더 진한 테두리로 구분 */
+    background-color: #fcfcfc !important;
   }
 
-  /* PDF Button Custom (match streamlit) */
-  .ytcc-cap-btn {
-    display: block;
-    border-radius: 8px;
-    font-weight: 600;
-    font-size: 0.82rem;
-    padding: 0.35rem 0.5rem;
-    cursor: pointer;
-    text-align: center;
-    box-sizing: border-box;
-    font-family: "Helvetica Neue", sans-serif;
+  /* Disabled State */
+  .stButton button:disabled, .ytcc-cap-btn:disabled {
+    background-color: #f3f4f6 !important;
+    color: #d1d5db !important;
+    border-color: #e5e7eb !important;
+    cursor: not-allowed !important;
   }
 
   /* ===== Session List Compact ===== */
   .session-list-container {
-    margin-top: 10px;
+    margin-top: 5px !important;
     border-top: 1px solid #e5e7eb;
-    padding-top: 12px;
+    padding-top: 8px !important;
   }
   .session-header {
     font-size: 0.75rem;
     font-weight: 700;
     color: #9ca3af;
-    margin-bottom: 8px;
+    margin-bottom: 4px !important;
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
   
-  /* Session Items */
+  /* List Items */
   .sess-name .stButton button {
-    background: transparent !important;
     border: none !important;
     box-shadow: none !important;
     text-align: left !important;
-    padding: 0.2rem 0.4rem !important; /* 리스트 간격 더 좁게 */
+    padding: 0.2rem 0.3rem !important; /* 리스트 내부 여백 축소 */
+    background: transparent !important;
     color: #4b5563 !important;
     font-weight: 500 !important;
-    font-size: 0.88rem !important;
+    font-size: 0.85rem !important;
+    height: auto !important;
+    min-height: auto !important;
   }
   .sess-name .stButton button:hover {
     background: #f3f4f6 !important;
     color: #111827 !important;
   }
   
-  /* More Menu */
+  /* More Menu Dots */
   .more-menu .stButton button {
-    background: transparent !important;
     border: none !important;
     box-shadow: none !important;
+    background: transparent !important;
     color: #9ca3af !important;
     padding: 0 !important;
+    min-height: auto !important;
   }
-  .more-menu .stButton button:hover {
-    color: #4b5563 !important;
-  }
-
-  /* Main Title Area */
-  .ytcc-login-title, .ytcc-main-title{
+  
+  /* Main Title Area (Login Page) */
+  .ytcc-login-title, .ytcc-main-title {
     font-weight: 800;
-    font-size: clamp(1.5rem, 2.5vw, 2.5rem);
+    /* 폰트 사이즈 반응형 조정 + 줄바꿈 방지 */
+    font-size: clamp(1.4rem, 2.2vw, 2.5rem); 
     background: linear-gradient(45deg, #4285F4, #9B72CB, #D96570, #F2A60C);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     margin-bottom: 0.5rem;
+    white-space: nowrap !important; /* [핵심] 줄바꿈 방지 */
   }
 </style>
 """
@@ -2151,44 +2136,46 @@ require_auth()
 with st.sidebar:
     st.markdown('<div class="ytcc-sb-title">💬 유튜브 댓글분석 AI</div>', unsafe_allow_html=True)
 
-    # --- Auth info (Compact Row) ---
+    # --- Auth info (Compact & Inline Logout) ---
     if st.session_state.get("auth_user_id"):
         disp = st.session_state.get("auth_display_name", st.session_state.get("auth_user_id"))
         role = st.session_state.get("auth_role", "user")
         
-        # Flexbox layout for User Info + Logout Text
-        st.markdown(f"""
-        <div class="ytcc-user-row">
-            <div class="ytcc-user-info">
-                {disp} <span class="ytcc-user-role">({role})</span>
-            </div>
-            </div>
-        """, unsafe_allow_html=True)
-
-        # 로그아웃 버튼 (위의 div와 시각적으로 같은 줄에 있는 것처럼 배치하기 위해 margin 조정 필요하나,
-        # 스트림릿 구조상 아래에 배치하되 CSS로 우측 상단으로 끌어올리거나, 깔끔하게 별도 행 처리)
-        # 여기서는 가장 깔끔하게 "바로 아래 우측 정렬" 텍스트 링크로 처리.
+        # [핵심] 이름과 로그아웃 버튼을 한 줄에 배치
+        # st.columns의 gap을 "small"로 하고, CSS로 버튼을 텍스트처럼 보이게 처리
+        c_user, c_logout = st.columns([0.75, 0.25], gap="small")
         
-        c_hidden, c_logout = st.columns([1, 1])
+        with c_user:
+            # HTML로 텍스트 렌더링 (마진 제거)
+            st.markdown(f"""
+            <div style="display:flex; align-items:baseline; padding-top:4px;">
+                <span class="user-info-text">{disp}</span>
+                <span class="user-role-text">({role})</span>
+            </div>
+            """, unsafe_allow_html=True)
+            
         with c_logout:
-            st.markdown('<div class="ytcc-logout-text" style="text-align:right; margin-top:-20px;">', unsafe_allow_html=True)
+            # 이 버튼은 CSS(.logout-btn-area)에 의해 투명한 텍스트 링크로 변함
+            st.markdown('<div class="logout-btn-area">', unsafe_allow_html=True)
             if st.button("로그아웃", key="logout_btn"):
                 _logout_and_clear()
                 st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
+            
+        st.markdown('<div style="border-bottom:1px solid #e5e7eb; margin-bottom:12px; margin-top:2px;"></div>', unsafe_allow_html=True)
 
-    # --- Main Actions (Tight Spacing) ---
+
+    # --- Main Actions (Drastically reduced spacing) ---
     # 1. New Chat
-    st.markdown('<div class="new-chat-btn">', unsafe_allow_html=True)
+    st.markdown('<div class="new-chat-btn" style="margin-bottom: 6px;">', unsafe_allow_html=True)
     if st.button("＋ 새 분석 시작", use_container_width=True):
         _reset_chat_only(keep_auth=True)
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
     
-    # 2. Save Actions (Row)
+    # 2. Save Actions (Side by Side, Consistent Style)
     if st.session_state.chat:
-        # columns gap reduced by CSS, but strict columns here
-        c1, c2 = st.columns(2) 
+        c1, c2 = st.columns(2, gap="small") 
         with c1:
             st.markdown('<div class="save-chat-btn">', unsafe_allow_html=True)
             has_data = bool(st.session_state.last_csv)
@@ -2205,7 +2192,7 @@ with st.sidebar:
             st.markdown('</div>', unsafe_allow_html=True)
         
         with c2:
-            st.markdown('<div class="save-chat-btn">', unsafe_allow_html=True)
+            st.markdown('<div class="save-chat-btn">', unsafe_allow_html=True) # PDF class 동일하게 적용
             pdf_title = _session_title_for_pdf()
             render_pdf_capture_button("PDF 저장", pdf_title)
             st.markdown('</div>', unsafe_allow_html=True)
@@ -2238,7 +2225,8 @@ with st.sidebar:
                                 st.session_state.pop('editing_session', None)
                                 st.rerun()
                     else:
-                        sc1, sc2 = st.columns([0.88, 0.12])
+                        # 리스트 간격도 gap="small"로 최대한 붙임
+                        sc1, sc2 = st.columns([0.85, 0.15], gap="small")
                         with sc1:
                             st.markdown('<div class="sess-name">', unsafe_allow_html=True)
                             if st.button(f"▪ {sess}", key=f"sess_{sess}", use_container_width=True):
@@ -2261,7 +2249,7 @@ with st.sidebar:
             
     # Footer
     st.markdown("""
-        <div style="margin-top:auto; padding-top:2rem; font-size:0.7rem; color:#d1d5db; text-align:center;">
+        <div style="margin-top:auto; padding-top:1rem; font-size:0.7rem; color:#d1d5db; text-align:center;">
             Digital Marketing Data Part<br>Powered by Gemini
         </div>
     """, unsafe_allow_html=True)
@@ -2301,15 +2289,14 @@ if not st.session_state.chat:
 </div>
 """, unsafe_allow_html=True)
 
-    # [토글 버튼] - 문구 단축
+    # [토글 버튼]
     _, col_toggle, _ = st.columns([1.3, 1, 1.3])
     with col_toggle:
         st.write("") 
         st.toggle(
-            "🏢 자사 IP 모드", # 문구 줄바꿈 방지를 위해 짧게 수정
+            "🏢 자사 IP 모드", 
             key="own_ip_mode",
         )
-        # Check cache logic
         cur_toggle = bool(st.session_state.get("own_ip_mode", False))
         prev_toggle = st.session_state.get("own_ip_toggle_prev", None)
         if cur_toggle and (prev_toggle is None or prev_toggle is False):
@@ -2351,3 +2338,4 @@ if st.session_state.chat and st.session_state.chat[-1]["role"] == "user":
     st.session_state.chat.append({"role": "assistant", "content": response})
     st.rerun()
 # endregion
+
