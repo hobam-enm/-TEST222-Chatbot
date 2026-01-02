@@ -132,39 +132,11 @@ GLOBAL_CSS = r"""
     margin-left: 4px;
   }
 
-  /* ===== [수정 4] Logout Button "Text Only" Style ===== */
-  /* data-testid까지 명시하여 버튼 스타일을 완벽히 제거 */
-  .logout-btn-area div[data-testid="stButton"] > button {
-    background-color: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    color: #6b7280 !important; /* 차분한 회색 */
-    font-size: 0.75rem !important;
-    text-decoration: underline !important;
-    min-height: 0 !important;
-    height: auto !important;
-    line-height: 1.2 !important;
-    float: right;
-  }
-  .logout-btn-area div[data-testid="stButton"] > button:hover {
-    color: #ef4444 !important; /* Red hover */
-    text-decoration: none !important;
-    background-color: transparent !important;
-  }
-  .logout-btn-area div[data-testid="stButton"] > button:active,
-  .logout-btn-area div[data-testid="stButton"] > button:focus {
-    background-color: transparent !important;
-    border: none !important;
-    outline: none !important;
-    box-shadow: none !important;
-  }
-
-
-  /* ===== Unified "Flat" Button Style ===== */
-  /* [수정 3] 배경색을 #f3f4f6(더 연한 회색)으로 변경 */
-  .stButton button {
+  /* ===== Button Styling Strategy ===== */
+  
+  /* 1. Default (Secondary) Buttons: Save, Session List, etc. */
+  /* [수정] 배경색을 #f3f4f6 (아주 연한 회색)으로 통일 */
+  div[data-testid="stButton"] button[kind="secondary"] {
     background-color: #f3f4f6 !important; 
     border: none !important;
     border-radius: 8px !important;
@@ -177,44 +149,47 @@ GLOBAL_CSS = r"""
     transition: all 0.15s ease !important;
     box-sizing: border-box !important;
     font-family: inherit !important;
-    min-height: 2.15rem !important; /* 높이 고정으로 PDF 버튼과 싱크 맞춤 */
+    min-height: 2.15rem !important;
   }
-
-  /* Hover Effect */
-  .stButton button:hover {
+  div[data-testid="stButton"] button[kind="secondary"]:hover {
     background-color: #e5e7eb !important; 
     color: #111827 !important;
   }
-  
-  /* Active/Focus */
-  .stButton button:active {
+  div[data-testid="stButton"] button[kind="secondary"]:active {
     background-color: #d1d5db !important;
     box-shadow: none !important;
   }
 
-  /* ===== [수정 2] New Chat Button - Dark & Pop ===== */
-  /* div 클래스 선택자를 사용하여 새 분석 버튼만 어둡게 덮어쓰기 */
-  .new-chat-btn div[data-testid="stButton"] > button {
-    background-color: #111827 !important; /* 아주 진한 네이비/블랙 */
-    color: #ffffff !important;
+  /* 2. Primary Button: New Analysis Start */
+  /* [수정] type="primary" 버튼은 Dark Navy (#111827)로 강제 적용 */
+  div[data-testid="stButton"] button[kind="primary"] {
+    background-color: #111827 !important; 
     border: 1px solid #1f2937 !important;
+    border-radius: 8px !important;
+    color: #ffffff !important;
+    font-weight: 600 !important;
+    font-size: 0.82rem !important;
+    padding: 0.45rem 0.5rem !important;
+    box-shadow: none !important;
+    width: 100% !important;
+    min-height: 2.15rem !important;
+    transition: all 0.15s ease !important;
   }
-  .new-chat-btn div[data-testid="stButton"] > button:hover {
-    background-color: #374151 !important;
+  div[data-testid="stButton"] button[kind="primary"]:hover {
+    background-color: #374151 !important; 
     color: #ffffff !important;
     border-color: #4b5563 !important;
   }
-  /* 눌렀을 때도 어두운 색 유지 */
-  .new-chat-btn div[data-testid="stButton"] > button:active {
+  div[data-testid="stButton"] button[kind="primary"]:active {
     background-color: #000000 !important;
-    color: #ffffff !important;
   }
 
   /* Disabled State */
-  .stButton button:disabled, .ytcc-cap-btn:disabled {
+  button:disabled, .ytcc-cap-btn:disabled {
     background-color: #f9fafb !important;
     color: #e5e7eb !important;
     cursor: not-allowed !important;
+    border-color: transparent !important;
   }
 
 
@@ -234,20 +209,21 @@ GLOBAL_CSS = r"""
   }
   
   /* List Items */
-  .sess-name .stButton button {
+  .sess-name div[data-testid="stButton"] button {
     background: transparent !important;
     text-align: left !important;
     padding: 0.2rem 0.3rem !important;
     color: #4b5563 !important;
     font-weight: 500 !important;
+    box-shadow: none !important;
   }
-  .sess-name .stButton button:hover {
+  .sess-name div[data-testid="stButton"] button:hover {
     background: #f3f4f6 !important;
     color: #111827 !important;
   }
   
   /* More Menu (...) Button - Remove Border */
-  .more-menu .stButton button {
+  .more-menu div[data-testid="stButton"] button {
     background: transparent !important;
     border: none !important;
     padding: 0 !important;
@@ -255,7 +231,7 @@ GLOBAL_CSS = r"""
     box-shadow: none !important;
     min-height: auto !important;
   }
-  .more-menu .stButton button:hover {
+  .more-menu div[data-testid="stButton"] button:hover {
     color: #4b5563 !important;
     background: transparent !important;
   }
@@ -550,7 +526,7 @@ def _session_title_for_pdf() -> str:
 def render_pdf_capture_button(label: str, pdf_filename_base: str) -> None:
     """
     프론트에서 대화창(stChatMessage)을 '스크롤 끝까지' 캡쳐해서 PDF로 저장.
-    [수정 1] 메인 버튼과 완벽히 동일한 스타일 CSS를 주입.
+    [수정] CSS를 메인의 Secondary Button(#f3f4f6)과 완벽히 일치시킴
     """
     safe = re.sub(r'[^0-9A-Za-z가-힣 _\-\(\)\[\]]+', '', (pdf_filename_base or 'chat')).strip() or "chat"
     safe = safe.replace(" ", "_")[:80]
@@ -706,7 +682,7 @@ def render_pdf_capture_button(label: str, pdf_filename_base: str) -> None:
     </script>
 
     <style>
-      /* [중요] Region 1의 .stButton button 스타일을 '그대로' 복사해와야만 똑같이 보임 */
+      /* [수정] 메인 CSS의 button[kind="secondary"]와 일치시킴 (#f3f4f6) */
       .ytcc-cap-btn {{
         width: 100%;
         border-radius: 8px; 
@@ -716,7 +692,7 @@ def render_pdf_capture_button(label: str, pdf_filename_base: str) -> None:
         line-height: 1.2;
         min-height: 2.15rem; /* 높이 고정 중요 */
         border: none;
-        background: #f3f4f6; /* Region 1과 동일한 연한 회색 */
+        background: #f3f4f6; /* 일치 */
         color: #374151;
         cursor: pointer;
         box-sizing: border-box;
@@ -739,6 +715,7 @@ def render_pdf_capture_button(label: str, pdf_filename_base: str) -> None:
     """, height=46)
 
 # endregion
+
 
 # region [Auth: ID/PW in secrets.toml]
 import hmac
@@ -2122,29 +2099,35 @@ with st.sidebar:
             """, unsafe_allow_html=True)
             
         with c_logout:
-            # [수정] 버튼 스타일을 벗기기 위한 Wrapper Class
-            st.markdown('<div class="logout-btn-area">', unsafe_allow_html=True)
-            if st.button("로그아웃", key="logout_btn"):
-                _logout_and_clear()
-                st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
+            # [수정] 로그아웃을 버튼 박스 대신 '텍스트 링크'로 변경
+            # 클릭 시 ?logout=true 로 이동 -> require_auth()에서 감지하여 로그아웃 처리
+            st.markdown(
+                """
+                <a href="?logout=true" target="_self" 
+                   style="float:right; color:#6b7280; font-size:0.75rem; text-decoration:underline; 
+                          font-weight:500; cursor:pointer; margin-top:4px;">
+                   로그아웃
+                </a>
+                """, 
+                unsafe_allow_html=True
+            )
             
         st.markdown('<div style="border-bottom:1px solid #efefef; margin-bottom:12px; margin-top:2px;"></div>', unsafe_allow_html=True)
 
     # --- Main Actions ---
-    # 1. New Chat (Dark Button)
-    st.markdown('<div class="new-chat-btn" style="margin-bottom: 6px;">', unsafe_allow_html=True)
-    if st.button("＋ 새 분석 시작", use_container_width=True):
+    # 1. New Chat (Dark Button) - [수정] type="primary"로 지정하여 CSS 적용
+    if st.button("＋ 새 분석 시작", type="primary", use_container_width=True):
         _reset_chat_only(keep_auth=True)
         st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
+    
+    st.markdown('<div style="margin-bottom: 6px;"></div>', unsafe_allow_html=True)
     
     # 2. Save Actions (Flat Gray Buttons)
     if st.session_state.chat:
         c1, c2 = st.columns(2, gap="small") 
         with c1:
-            st.markdown('<div class="save-chat-btn">', unsafe_allow_html=True)
             has_data = bool(st.session_state.last_csv)
+            # 기본값(secondary)이므로 Light Gray 적용됨
             if st.button("세션 저장", use_container_width=True, disabled=not has_data):
                 if has_data:
                     with st.spinner("저장..."):
@@ -2155,14 +2138,11 @@ with st.sidebar:
                         st.rerun()
                     else:
                         st.error(result)
-            st.markdown('</div>', unsafe_allow_html=True)
         
         with c2:
-            st.markdown('<div class="save-chat-btn">', unsafe_allow_html=True)
             pdf_title = _session_title_for_pdf()
-            # PDF 버튼도 이제 CSS에서 .ytcc-cap-btn 클래스로 동일 스타일 적용됨
+            # PDF 버튼 (Region 2에서 스타일 일치시킴)
             render_pdf_capture_button("PDF 저장", pdf_title)
-            st.markdown('</div>', unsafe_allow_html=True)
 
     # --- Session History ---
     st.markdown('<div class="session-list-container">', unsafe_allow_html=True)
