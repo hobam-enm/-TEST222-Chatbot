@@ -83,196 +83,191 @@ GLOBAL_CSS = r"""
 
   /* ===== Main padding ===== */
   .main .block-container{
-    padding-top: 1.6rem;
-    padding-right: 1rem;
-    padding-left: 1rem;
+    padding-top: 2rem;
     padding-bottom: 5rem;
-    max-width: 1300px;
+    max-width: 1200px;
   }
 
-  /* ===== Sidebar width ===== */
+  /* ===== Sidebar Styling ===== */
   [data-testid="stSidebar"]{
-    width: 360px !important;
-    min-width: 360px !important;
-    max-width: 360px !important;
+    background-color: #f8f9fa;
+    border-right: 1px solid #e9ecef;
   }
-  [data-testid="stSidebar"] + div[class*="resizer"]{ display:none; }
-
-  /* ===== Sidebar base spacing reset ===== */
-  [data-testid="stSidebarContent"]{
-    padding: 12px 14px 12px 14px !important;
+  [data-testid="stSidebarUserContent"] {
+    padding: 1.5rem 1rem !important;
   }
-  [data-testid="stSidebar"] .element-container,
-  [data-testid="stSidebar"] .stMarkdown,
-  [data-testid="stSidebar"] .stButton,
-  [data-testid="stSidebar"] .stDownloadButton,
-  [data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div{
-    margin: 0 !important;
-    padding: 0 !important;
-  }
-  [data-testid="stSidebar"] [data-testid="stHorizontalBlock"]{
-    gap: 6px !important;
-    margin: 0 !important;
-    padding: 0 !important;
-  }
-  [data-testid="stSidebar"] [data-testid="stVerticalBlock"]{
-    gap: 6px !important;
-  }
-  [data-testid="stSidebar"] hr{ margin: 6px 0 !important; }
-
-  /* ===== Sidebar header (v3 느낌 유지 + 1줄 고정) ===== */
+  
+  /* Sidebar Titles */
   .ytcc-sb-title{
+    font-family: 'Helvetica Neue', sans-serif;
     font-weight: 800;
-    font-size: clamp(1.10rem, 1.65vw, 1.45rem);
-    line-height: 1.05;
-    margin: 0 0 8px 0;
-    background: -webkit-linear-gradient(45deg, #4285F4, #9B72CB, #D96570, #F2A60C);
+    font-size: 1.35rem;
+    margin-bottom: 1.2rem;
+    background: linear-gradient(90deg, #4285F4, #DB4437, #F4B400, #0F9D58);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
-    white-space: nowrap;
-    overflow: visible;
-    text-overflow: clip;
-    letter-spacing: -0.03em;
-    word-break: keep-all;
+    letter-spacing: -0.5px;
   }
-  .ytcc-sb-title span{ font-weight: 800; }
 
-  .ytcc-sb-userrow{
-    display:flex;
-    align-items:flex-start;
-    justify-content:space-between;
-    gap: 10px;
-    margin: 0 0 10px 0;
+  /* User Profile Area */
+  .ytcc-user-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: white;
+    padding: 0.75rem 1rem;
+    border-radius: 12px;
+    border: 1px solid #e5e7eb;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
   }
-  .ytcc-sb-user{
-    font-size: 0.95rem;
+  .ytcc-user-info {
+    display: flex;
+    flex-direction: column;
+  }
+  .ytcc-user-name {
+    font-size: 0.9rem;
     font-weight: 700;
-    color:#111827;
-    line-height:1.25;
-    margin: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    color: #1f2937;
   }
-  .ytcc-sb-role{
-    font-size: 0.78rem;
-    font-weight: 600;
-    color:#6b7280;
-  }
-  .ytcc-sb-logout{
-    font-size: 0.78rem;
+  .ytcc-user-role {
+    font-size: 0.75rem;
     color: #6b7280;
+  }
+
+  /* Text-only Logout Button Hack */
+  /* div wrapper class */
+  .ytcc-text-btn button {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    color: #9ca3af !important;
+    font-size: 0.8rem !important;
     text-decoration: underline;
-    font-weight: 600;
-    line-height:1.1;
-    white-space: nowrap;
-  }
-  .ytcc-sb-logout:hover{ color:#374151; }
-
-/* ===== Sidebar action buttons (새채팅/세션저장/PDF저장 스타일 통일) ===== */
-.new-chat-btn .stButton button,
-.save-chat-btn .stButton button{
-  width:100% !important;
-  border-radius: 14px !important;
-  padding: 0.42rem 0.60rem !important;
-  font-size: 0.82rem !important;
-  font-weight: 760 !important;
-  line-height: 1.05 !important;
-  min-height: 2.15rem !important;
-  box-shadow: none !important;
-  box-sizing: border-box !important;
-}
-
-/* 새채팅(색상만 다름) */
-.new-chat-btn .stButton button{
-  border: 1px solid #d2e3fc !important;
-  background:#e8f0fe !important;
-  color:#0052CC !important;
-}
-.new-chat-btn .stButton button:hover{
-  background:#d2e3fc !important;
-  border-color:#c2d8f8 !important;
-  color:#0041A3 !important;
-}
-
-/* 세션저장(PDF저장과 동일 그린 톤) */
-.save-chat-btn .stButton button{
-  border: 1px solid #cdeedb !important;
-  background:#eafaf1 !important;
-  color:#127a3a !important;
-}
-.save-chat-btn .stButton button:hover{
-  background:#d6f3e4 !important;
-  border-color:#bfe8d3 !important;
-  color:#0f6a32 !important;
-}
-.save-chat-btn .stButton button:disabled{
-  opacity: 0.70 !important;
-}
-
-
-  /* ===== Session list (대화 기록) : v3 카드형 ===== */
-  .session-list{ margin-top: 6px !important; }
-  .session-list .sess-name .stButton button{
-    background: #ffffff !important;
-    border: 1px solid #e5e7eb !important;
-    border-radius: 14px !important;
-    padding: 0.52rem 0.72rem !important;
-    box-shadow: none !important;
-    color: #111827 !important;
-    font-size: 0.90rem !important;
-    font-weight: 650 !important;
-    text-align: left !important;
-    width: 100% !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
-    white-space: nowrap !important;
-  }
-  .session-list .sess-name .stButton button:hover{
-    border-color: #d1d5db !important;
-    background: #f9fafb !important;
-  }
-
-  .session-list .more-menu .stButton button{
-    background: #ffffff !important;
-    border: 1px solid #e5e7eb !important;
-    border-radius: 12px !important;
-    padding: 0.48rem 0.55rem !important;
-    min-height: 2.15rem !important;
+    font-weight: 500 !important;
+    min-height: auto !important;
+    height: auto !important;
     line-height: 1 !important;
-    box-shadow: none !important;
   }
-  .session-list .more-menu .stButton button:hover{
-    border-color: #d1d5db !important;
-    background: #f9fafb !important;
+  .ytcc-text-btn button:hover {
+    color: #ef4444 !important;
+    text-decoration: none;
   }
-
-  /* Rename input compact */
-  [data-testid="stSidebar"] input{
-    padding-top: 0.38rem !important;
-    padding-bottom: 0.38rem !important;
+  .ytcc-text-btn button:active {
+    color: #dc2626 !important;
   }
 
-  /* Assistant message font */
-  [data-testid="stChatMessage"]:has(span[data-testid="chat-avatar-assistant"]) p,
-  [data-testid="stChatMessage"]:has(span[data-testid="chat-avatar-assistant"]) li{
-    font-size: 0.95rem;
+  /* ===== Action Buttons (New Chat, Save, PDF) ===== */
+  /* Common Button Reset */
+  .stButton button {
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+    border: 1px solid transparent !important;
+    transition: all 0.2s ease !important;
   }
 
-  /* Login / Main title one-line */
-  .ytcc-login-title, .ytcc-main-title{
+  /* New Chat - Primary Style */
+  .new-chat-btn .stButton button {
+    background-color: #111827 !important;
+    color: white !important;
+    width: 100%;
+    padding: 0.5rem 0 !important;
+  }
+  .new-chat-btn .stButton button:hover {
+    background-color: #374151 !important;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  }
+
+  /* Save / PDF - Secondary Style */
+  .action-row {
+    display: flex; 
+    gap: 8px; 
+    margin-bottom: 1.5rem;
+  }
+  .save-chat-btn .stButton button, 
+  .ytcc-cap-btn { 
+    background-color: #ffffff !important;
+    border: 1px solid #d1d5db !important;
+    color: #374151 !important;
+    font-size: 0.85rem !important;
+    padding: 0.4rem 0 !important;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
+  }
+  .save-chat-btn .stButton button:hover,
+  .ytcc-cap-btn:hover {
+    background-color: #f3f4f6 !important;
+    border-color: #9ca3af !important;
+    color: #111827 !important;
+  }
+  .save-chat-btn .stButton button:disabled {
+    background-color: #f9fafb !important;
+    color: #d1d5db !important;
+    border-color: #e5e7eb !important;
+  }
+
+  /* HTML2Canvas Button override to match streamlit buttons */
+  .ytcc-cap-btn {
+    width: 100%;
+    display: block;
+    border-radius: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: center;
+    transition: all 0.2s;
+  }
+
+  /* ===== Session List ===== */
+  .session-list-container {
+    margin-top: 1rem;
+    border-top: 1px solid #e5e7eb;
+    padding-top: 1rem;
+  }
+  .session-header {
+    font-size: 0.85rem;
     font-weight: 700;
-    font-size: clamp(1.10rem, 2.0vw, 2.10rem);
-    line-height: 1.05;
-    margin: 0;
-    background: -webkit-linear-gradient(45deg, #4285F4, #9B72CB, #D96570, #F2A60C);
+    color: #6b7280;
+    margin-bottom: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  
+  /* Session Items */
+  .sess-name .stButton button {
+    background: transparent !important;
+    border: none !important;
+    text-align: left !important;
+    padding: 0.3rem 0.5rem !important;
+    color: #4b5563 !important;
+    font-weight: 500 !important;
+    font-size: 0.9rem !important;
+    border-radius: 6px !important;
+  }
+  .sess-name .stButton button:hover {
+    background: #f3f4f6 !important;
+    color: #111827 !important;
+  }
+  
+  /* More Menu (Dots) */
+  .more-menu .stButton button {
+    background: transparent !important;
+    border: none !important;
+    color: #9ca3af !important;
+    padding: 0 !important;
+  }
+  .more-menu .stButton button:hover {
+    color: #4b5563 !important;
+  }
+
+  /* Login & Main Title */
+  .ytcc-login-title, .ytcc-main-title{
+    font-weight: 800;
+    font-size: clamp(1.5rem, 2.5vw, 2.5rem);
+    background: linear-gradient(45deg, #4285F4, #9B72CB, #D96570, #F2A60C);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
-    white-space: nowrap;
-    overflow: visible;
-    text-overflow: clip;
-    letter-spacing: -0.01em;
-    word-break: keep-all;
+    margin-bottom: 0.5rem;
   }
 </style>
 """
@@ -1024,7 +1019,6 @@ def require_auth():
 # endregion
 
 
-
 # region [Helper Classes]
 class RotatingKeys:
     def __init__(self, keys, state_key: str, on_rotate=None):
@@ -1085,6 +1079,7 @@ class RotatingYouTube:
         # 모든 키를 다 써봤는데도 안 되면 마지막 에러 발생
         raise last_error
 # endregion
+
 
 # region [GitHub & Session Management]
 def _gh_headers(token: str):
@@ -1391,6 +1386,7 @@ if 'session_to_rename' in st.session_state:
         st.rerun()
 # endregion
 
+
 # region [Data Processing & Utils]
 def serialize_comments_for_llm_from_file(csv_path: str,
                                          max_chars_per_comment=280,
@@ -1541,6 +1537,7 @@ def strip_urls(s: str) -> str:
     s = re.sub(r"https?://\S+", " ", s)
     return re.sub(r"\s+", " ", s).strip()
 # endregion
+
 
 # region [API Integrations: Gemini & YouTube]
 # ==============================================================================
@@ -2150,168 +2147,184 @@ def run_followup_turn(user_query: str):
 require_auth()
 
 with st.sidebar:
-    st.markdown('<div class="ytcc-sb-title">💬 유튜브 댓글분석: <span>AI 챗봇</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="ytcc-sb-title">💬 유튜브 댓글분석 AI</div>', unsafe_allow_html=True)
 
-    # --- Auth info ---
+    # --- Auth info (Card Style) ---
     if st.session_state.get("auth_user_id"):
         disp = st.session_state.get("auth_display_name", st.session_state.get("auth_user_id"))
         role = st.session_state.get("auth_role", "user")
+        
+        # User Card Layout with Text-Only Logout
+        c_user, c_logout = st.columns([1, 0.4])
+        with c_user:
+             st.markdown(f"""
+            <div class="ytcc-user-info">
+                <span class="ytcc-user-name">{disp}</span>
+                <span class="ytcc-user-role">{role}</span>
+            </div>
+            """, unsafe_allow_html=True)
+        with c_logout:
+            st.markdown('<div class="ytcc-text-btn" style="text-align:right; padding-top:4px;">', unsafe_allow_html=True)
+            if st.button("로그아웃", key="logout_btn"):
+                _logout_and_clear()
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+        st.markdown('<div style="margin-bottom: 20px;"></div>', unsafe_allow_html=True)
 
-    # ✅ user row: same look, but logout as Streamlit button (no new window)
-    u1, u2 = st.columns([0.78, 0.22], gap="small")
-    with u1:
-        st.markdown(
-            f'<div class="ytcc-sb-user">👤 {disp} <span class="ytcc-sb-role">({role})</span></div>',
-            unsafe_allow_html=True,
-        )
-    with u2:
-        st.markdown('<div class="ytcc-logout-btn">', unsafe_allow_html=True)
-        if st.button("로그아웃", key="logout_btn", use_container_width=True):
-            _logout_and_clear()
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown("""<style>[data-testid="stSidebarUserContent"] {display: flex; flex-direction: column; height: calc(100vh - 4rem);} .sidebar-top-section { flex-grow: 1; overflow-y: auto; } .sidebar-bottom-section { flex-shrink: 0; }</style>""", unsafe_allow_html=True)
-
-    st.markdown('<div class="sidebar-top-section">', unsafe_allow_html=True)
-    st.markdown('<div class="new-chat-btn tight-btn">', unsafe_allow_html=True)
-    if st.button("새채팅", use_container_width=True):
+    # --- Main Actions ---
+    # 1. New Chat (Primary Action)
+    st.markdown('<div class="new-chat-btn">', unsafe_allow_html=True)
+    if st.button("＋ 새 분석 시작", use_container_width=True):
         _reset_chat_only(keep_auth=True)
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
+    
+    st.write("") # Spacer
 
-    # 저장 / PDF (한 행)
+    # 2. Save Actions (Row)
     if st.session_state.chat:
-        c_save, c_pdf = st.columns([1, 1], gap="small")
-
-        with c_save:
+        c1, c2 = st.columns(2, gap="small")
+        with c1:
             st.markdown('<div class="save-chat-btn">', unsafe_allow_html=True)
-            if st.session_state.last_csv:
-                if st.button("세션저장", use_container_width=True):
-                    with st.spinner("세션 저장 중..."):
+            # Save Session Logic
+            has_data = bool(st.session_state.last_csv)
+            if st.button("💾 세션 저장", use_container_width=True, disabled=not has_data):
+                if has_data:
+                    with st.spinner("저장 중..."):
                         success, result = save_current_session_to_github()
                     if success:
-                        st.success(f"'{result}' 저장 완료!")
-                        time.sleep(1.2)
+                        st.success(f"저장 완료")
+                        time.sleep(1)
                         st.rerun()
                     else:
                         st.error(result)
-            else:
-                st.button("세션저장", use_container_width=True, disabled=True)
             st.markdown('</div>', unsafe_allow_html=True)
-
-        with c_pdf:
-            st.markdown('<div class="pdf-chat-btn">', unsafe_allow_html=True)
+        
+        with c2:
+            st.markdown('<div class="save-chat-btn">', unsafe_allow_html=True)
             pdf_title = _session_title_for_pdf()
-            render_pdf_capture_button("PDF저장", pdf_title)
+            # PDF Capture Button (Refactored visual)
+            render_pdf_capture_button("📄 PDF 내보내기", pdf_title)
             st.markdown('</div>', unsafe_allow_html=True)
 
-
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown("---")
-    st.markdown("#### 대화 기록")
+    # --- Session History ---
+    st.markdown('<div class="session-list-container">', unsafe_allow_html=True)
+    st.markdown('<div class="session-header">Recent History</div>', unsafe_allow_html=True)
 
     if not all([GITHUB_TOKEN, GITHUB_REPO]):
-        st.caption("GitHub 설정이 Secrets에 없습니다.")
+        st.info("GitHub 설정이 필요합니다.")
     else:
         try:
             user_id = st.session_state.get("auth_user_id") or "public"
             sessions = sorted(github_list_dir(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}", GITHUB_TOKEN), reverse=True)
-            if not sessions: st.caption("저장된 기록이 없습니다.")
+            
+            if not sessions: 
+                st.caption("저장된 기록이 없습니다.")
             else:
                 editing_session = st.session_state.get("editing_session", None)
-                st.markdown('<div class="session-list">', unsafe_allow_html=True)
+                
                 for sess in sessions:
+                    # Editing Mode
                     if sess == editing_session:
-                        new_name = st.text_input("새 이름:", value=sess, key=f"new_name_{sess}")
-                        c1, c2 = st.columns(2)
-                        if c1.button("✅", key=f"save_{sess}"):
-                            st.session_state.session_to_rename = (sess, new_name)
-                            st.session_state.pop('editing_session', None)
-                            st.rerun()
-                        if c2.button("❌", key=f"cancel_{sess}"):
-                            st.session_state.pop('editing_session', None)
-                            st.rerun()
+                        with st.container(border=True):
+                            new_name = st.text_input("새 이름", value=sess, key=f"new_name_{sess}", label_visibility="collapsed")
+                            ec1, ec2 = st.columns(2)
+                            if ec1.button("확인", key=f"save_{sess}", use_container_width=True):
+                                st.session_state.session_to_rename = (sess, new_name)
+                                st.session_state.pop('editing_session', None)
+                                st.rerun()
+                            if ec2.button("취소", key=f"cancel_{sess}", use_container_width=True):
+                                st.session_state.pop('editing_session', None)
+                                st.rerun()
+                    
+                    # Normal Mode
                     else:
-                        c1, c2 = st.columns([0.84, 0.16], gap="small")
-                        with c1:
+                        sc1, sc2 = st.columns([0.85, 0.15], gap="small")
+                        with sc1:
                             st.markdown('<div class="sess-name">', unsafe_allow_html=True)
-                            if st.button(sess, key=f"sess_{sess}", use_container_width=True):
+                            if st.button(f"▪ {sess}", key=f"sess_{sess}", use_container_width=True):
                                 st.session_state.session_to_load = sess
                                 st.rerun()
                             st.markdown('</div>', unsafe_allow_html=True)
-                        with c2:
+                        with sc2:
                             st.markdown('<div class="more-menu">', unsafe_allow_html=True)
                             if hasattr(st, "popover"):
-                                with st.popover("⋯"):
+                                with st.popover("⋮", use_container_width=True):
                                     if st.button("이름 변경", key=f"more_edit_{sess}", use_container_width=True):
                                         st.session_state.editing_session = sess
                                         st.rerun()
-                                    if st.button("삭제", key=f"more_del_{sess}", use_container_width=True):
+                                    if st.button("삭제", key=f"more_del_{sess}", type="primary", use_container_width=True):
                                         st.session_state.session_to_delete = sess
                                         st.rerun()
                             else:
-                                with st.expander("⋯"):
-                                    if st.button("이름 변경", key=f"more_edit_{sess}", use_container_width=True):
+                                # Fallback for older streamlit
+                                with st.expander("⋮"):
+                                    if st.button("수정", key=f"more_edit_{sess}"):
                                         st.session_state.editing_session = sess
                                         st.rerun()
-                                    if st.button("삭제", key=f"more_del_{sess}", use_container_width=True):
+                                    if st.button("삭제", key=f"more_del_{sess}"):
                                         st.session_state.session_to_delete = sess
                                         st.rerun()
                             st.markdown('</div>', unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-        except Exception: st.error("기록 로딩 실패")
+
+        except Exception: 
+            st.error("기록 로딩 실패")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="sidebar-bottom-section">', unsafe_allow_html=True)
-    st.markdown("""<hr><h3>📞 문의</h3><p>미디어)디지털마케팅 데이터파트</p>""", unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
-# [UI 분기]
+    # Footer Info
+    st.markdown("""
+        <div style="margin-top:auto; padding-top:2rem; font-size:0.75rem; color:#9ca3af; text-align:center;">
+            미디어)디지털마케팅 데이터파트<br>
+            Powered by Gemini
+        </div>
+    """, unsafe_allow_html=True)
+
+
+# [UI 분기 - Main Content]
 if not st.session_state.chat:
-    # 1. 메인 화면 (채팅 전): 여기에만 토글이 존재해야 함
+    # 1. 메인 화면 (Intro)
     st.markdown(
         """
 <div style="display:flex; flex-direction:column; align-items:center; justify-content:center;
-            text-align:center; height:70vh;">
-  <div class="ytcc-main-title">유튜브 댓글분석: <span>AI 챗봇</span></div>
-  <p style="font-size:1.2rem; color:#4b5563;">관련영상 유튜브 댓글반응을 AI가 요약해줍니다</p>
-  <div style="margin-top:3rem; padding:1rem 1.5rem; border:1px solid #e5e7eb; border-radius:12px;
-              background-color:#fafafa; max-width:600px; text-align:left;">
-    <h4 style="margin-bottom:1rem; font-weight:600;">⚠️ 사용 주의사항</h4>
-    <ol style="padding-left:20px;">
-      <li><strong>첫 질문 시</strong> 댓글 수집 및 AI 분석에 시간이 소요될 수 있습니다.</li>
-      <li>한 세션에서는 <strong>하나의 주제</strong>만 진행해야 분석 정확도가 유지됩니다.</li>
-      <li>첫 질문에는 <strong>기간을 명시</strong>해주세요 (예: 최근 48시간 / 5월 1일부터).</li>
-    </ol>
+            text-align:center; padding-top:10vh;">
+  <div class="ytcc-main-title">유튜브 댓글분석 AI</div>
+  <p style="font-size:1.1rem; color:#6b7280; max-width:600px; margin-top:10px;">
+    영상 URL만 넣으면, <b>Gemini</b>가 수천 개의 댓글을 읽고<br>
+    여론, 주요 키워드, 시청자 반응을 즉시 분석해드립니다.
+  </p>
+  
+  <div style="margin-top:3rem; padding:1.5rem; border:1px solid #e5e7eb; border-radius:16px;
+              background-color:#ffffff; max-width:650px; text-align:left; box-shadow:0 4px 6px -1px rgba(0,0,0,0.05);">
+    <h4 style="margin-bottom:1rem; font-size:1rem; font-weight:700; color:#374151;">💡 이렇게 질문해보세요</h4>
+    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <span style="background:#f3f4f6; padding:6px 12px; border-radius:20px; font-size:0.9rem; color:#4b5563;">최근 24시간 태풍상사 반응 요약해줘</span>
+        <span style="background:#f3f4f6; padding:6px 12px; border-radius:20px; font-size:0.9rem; color:#4b5563;">이 영상에서 긍정 반응만 뽑아줘</span>
+        <span style="background:#f3f4f6; padding:6px 12px; border-radius:20px; font-size:0.9rem; color:#4b5563;">https://youtu.be/xxxx 분석해줘</span>
+    </div>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
-    # [토글 버튼] 주의사항 박스 바로 아래 & 가운데 정렬
+    # [토글 버튼]
     _, col_toggle, _ = st.columns([1.3, 1, 1.3])
     with col_toggle:
-        st.write("") # 상단 여백
+        st.write("") 
         st.toggle(
-            "🧩 자사 IP 모드",
+            "🏢 자사 IP 모드 (공식채널 캐시 활용)",
             key="own_ip_mode",
-            help="ON: 자사(PGC) 캐시로 공식 영상 후보를 확보하고, 동시에 YouTube 검색으로 외부(UGC)까지 함께 수집합니다."
         )
-
-        # [자사모드 캐시 체크] (원격 동기화 없음: 레포의 pgc_cache/를 그대로 사용)
+        # Check cache logic
         cur_toggle = bool(st.session_state.get("own_ip_mode", False))
         prev_toggle = st.session_state.get("own_ip_toggle_prev", None)
-
         if cur_toggle and (prev_toggle is None or prev_toggle is False):
             cache_dir = _cache_local_dir()
             cache_files = [fn for fn in os.listdir(cache_dir) if re.fullmatch(r"cache_token_.*\.json", fn)]
             if cache_files:
-                st.success(f"자사(PGC) 캐시 준비됨 ({len(cache_files)}개 파일).")
+                st.success(f"PGC 캐시 확인됨 ({len(cache_files)}개)")
             else:
-                st.error(f"자사(PGC) 캐시 파일이 없습니다: {os.path.join(cache_dir, 'cache_token_*.json')}")
-
+                st.error("캐시 파일 없음")
         st.session_state["own_ip_toggle_prev"] = cur_toggle
 
 else:
@@ -2320,7 +2333,7 @@ else:
     scroll_to_bottom()
 
 
-if prompt := st.chat_input("예) 최근 24시간 태풍상사 반응 요약해줘 / 또는 영상 URL 붙여도 OK"):
+if prompt := st.chat_input("질문을 입력하거나 영상 URL을 붙여넣으세요..."):
     st.session_state.chat.append({"role": "user", "content": prompt})
     st.rerun()
 
@@ -2344,3 +2357,4 @@ if st.session_state.chat and st.session_state.chat[-1]["role"] == "user":
     st.session_state.chat.append({"role": "assistant", "content": response})
     st.rerun()
 # endregion
+
