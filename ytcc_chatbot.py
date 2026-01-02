@@ -259,6 +259,147 @@ st.markdown(
       background: transparent !important;
   }
 
+
+  /* =========================
+     Sidebar UI (v3 restore)
+     - keep logic intact, only visuals
+     ========================= */
+
+  /* Sidebar container padding tighter + consistent */
+  [data-testid="stSidebar"] [data-testid="stSidebarContent"]{
+      padding-top: 0.75rem !important;
+      padding-bottom: 0.75rem !important;
+  }
+  [data-testid="stSidebar"] .block-container{
+      padding-top: 0.2rem !important;
+      padding-left: 0.8rem !important;
+      padding-right: 0.8rem !important;
+  }
+
+  /* Kill excessive vertical gaps between elements */
+  [data-testid="stSidebar"] .element-container{
+      margin: 0.12rem 0 !important;
+      padding: 0 !important;
+  }
+  [data-testid="stSidebar"] [data-testid="stHorizontalBlock"]{
+      gap: 0.35rem !important;
+      margin-top: 0.05rem !important;
+      margin-bottom: 0.05rem !important;
+  }
+
+  /* Sidebar title: single-line + responsive */
+  .ytcc-sb-title-1line{
+      font-weight: 850;
+      font-size: clamp(1.06rem, 1.30vw, 1.36rem);
+      line-height: 1.05;
+      margin: 0 0 0.55rem 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      word-break: keep-all;
+      background:-webkit-linear-gradient(45deg,#4285F4,#9B72CB,#D96570,#F2A60C);
+      -webkit-background-clip:text;
+      -webkit-text-fill-color:transparent;
+  }
+
+  /* Top action buttons: consistent pill + shadow */
+  .ytcc-action .stButton button,
+  .ytcc-action [data-testid="stDownloadButton"] button,
+  .ytcc-action button.ytcc-pdf-btn{
+      width: 100% !important;
+      border-radius: 12px !important;
+      min-height: 2.15rem !important;
+      height: 2.15rem !important;
+      padding: 0.35rem 0.6rem !important;
+      font-size: 0.78rem !important;
+      line-height: 1.0 !important;
+      font-weight: 750 !important;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.08) !important;
+      transition: transform 120ms ease, box-shadow 120ms ease;
+      white-space: nowrap !important;
+  }
+  .ytcc-action .stButton button:hover,
+  .ytcc-action [data-testid="stDownloadButton"] button:hover,
+  .ytcc-action button.ytcc-pdf-btn:hover{
+      transform: translateY(-1px);
+      box-shadow: 0 8px 18px rgba(0,0,0,0.12) !important;
+  }
+
+  /* New chat (blue-ish) */
+  .ytcc-btn-new .stButton button{
+      background-color: #e8f0fe !important;
+      color: #0052CC !important;
+      border: 1px solid #d2e3fc !important;
+  }
+  .ytcc-btn-new .stButton button:hover{
+      background-color: #d2e3fc !important;
+      color: #0041A3 !important;
+      border-color: #c2d8f8 !important;
+  }
+
+  /* Save + PDF (green-ish) */
+  .ytcc-btn-save .stButton button{
+      background-color: #eafaf1 !important;
+      color: #127a3a !important;
+      border: 1px solid #cdeedb !important;
+  }
+  .ytcc-btn-save .stButton button:hover{
+      background-color: #d6f3e4 !important;
+      color: #0f6a32 !important;
+      border-color: #bfe8d3 !important;
+  }
+
+  /* Our custom PDF button lives in iframe HTML -> force it to match save button */
+  [data-testid="stSidebar"] button.ytcc-pdf-btn{
+      background-color: #eafaf1 !important;
+      color: #127a3a !important;
+      border: 1px solid #cdeedb !important;
+  }
+  [data-testid="stSidebar"] button.ytcc-pdf-btn:hover{
+      background-color: #d6f3e4 !important;
+      color: #0f6a32 !important;
+      border-color: #bfe8d3 !important;
+  }
+
+  /* Logout as text-link, never boxed */
+  .ytcc-logout .stButton button{
+      background: transparent !important;
+      border: none !important;
+      box-shadow: none !important;
+      padding: 0 !important;
+      min-height: unset !important;
+      height: auto !important;
+      font-size: 12px !important;
+      font-weight: 600 !important;
+      color: #6b7280 !important;
+      text-decoration: underline !important;
+  }
+  .ytcc-logout .stButton button:hover{
+      background: transparent !important;
+      color: #374151 !important;
+  }
+
+  /* Session list rows: compact + hover */
+  .session-list .sess-name .stButton button{
+      padding: 0.14rem 0.1rem !important;
+      font-size: 0.86rem !important;
+      line-height: 1.15 !important;
+      border-radius: 10px !important;
+  }
+  .session-list .sess-name .stButton button:hover{
+      background: rgba(0,0,0,0.04) !important;
+      text-decoration: none !important;
+  }
+
+  /* "⋯" button smaller + neat */
+  .session-list .more-menu .stButton button{
+      border-radius: 10px !important;
+      min-height: 2.0rem !important;
+      height: 2.0rem !important;
+      padding: 0.1rem 0.45rem !important;
+      box-shadow: none !important;
+  }
+
 </style>
 """,
     unsafe_allow_html=True
@@ -1799,18 +1940,27 @@ def render_capture_pdf_button(file_basename: str, label: str = "PDF저장"):
   }}
   .ytcc-pdf-btn {{
     width: 100%;
-    border: 1px solid rgba(0,0,0,0.06);
-    background: #ffffff;
-    color: #111827;
     border-radius: 12px;
-    font-weight: 700;
-    padding: 0.65rem 0.8rem;
+    min-height: 2.15rem;
+    height: 2.15rem;
+    padding: 0.35rem 0.6rem;
+    font-size: 0.78rem;
+    line-height: 1.0;
+    font-weight: 750;
     cursor: pointer;
+    background-color: #eafaf1;
+    color: #127a3a;
+    border: 1px solid #cdeedb;
     box-shadow: 0 4px 14px rgba(0,0,0,0.08);
+    transition: transform 120ms ease, box-shadow 120ms ease;
+    white-space: nowrap;
   }}
   .ytcc-pdf-btn:hover {{
     transform: translateY(-1px);
     box-shadow: 0 8px 18px rgba(0,0,0,0.12);
+    background-color: #d6f3e4;
+    color: #0f6a32;
+    border-color: #bfe8d3;
   }}
 </style>
     """.format(btn_id=btn_id, label=label, safe=safe)
@@ -2128,10 +2278,7 @@ def run_followup_turn(user_query: str):
 require_auth()
 
 with st.sidebar:
-    st.markdown(
-        '<h2 style="font-weight:850; font-size:clamp(1.05rem, 1.35vw, 1.35rem); line-height:1.1; margin:0 0 0.65rem 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; word-break:keep-all; background:-webkit-linear-gradient(45deg,#4285F4,#9B72CB,#D96570,#F2A60C); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">💬 유튜브 댓글분석: AI 챗봇</h2>',
-        unsafe_allow_html=True,
-    )
+    st.markdown('<div class="ytcc-sb-title-1line">💬 유튜브 댓글분석: AI 챗봇</div>', unsafe_allow_html=True)
 
     # --- Auth info ---
     if st.session_state.get("auth_user_id"):
@@ -2146,7 +2293,7 @@ with st.sidebar:
                 unsafe_allow_html=True,
             )
         with u2:
-            st.markdown('<div class="logout-link">', unsafe_allow_html=True)
+            st.markdown('<div class="ytcc-logout">', unsafe_allow_html=True)
             if st.button("로그아웃", key="logout_btn"):
                 _logout_and_clear()
                 try:
@@ -2161,7 +2308,7 @@ with st.sidebar:
     st.markdown("""<style>[data-testid="stSidebarUserContent"] {display: flex; flex-direction: column; height: calc(100vh - 4rem);} .sidebar-top-section { flex-grow: 1; overflow-y: auto; } .sidebar-bottom-section { flex-shrink: 0; }</style>""", unsafe_allow_html=True)
 
     st.markdown('<div class="sidebar-top-section">', unsafe_allow_html=True)
-    st.markdown('<div class="new-chat-btn tight-btn">', unsafe_allow_html=True)
+    st.markdown('<div class="ytcc-action ytcc-btn-new">', unsafe_allow_html=True)
     if st.button("새채팅", use_container_width=True):
         _reset_chat_only(keep_auth=True)
         st.rerun()
@@ -2171,7 +2318,7 @@ with st.sidebar:
     if st.session_state.chat and st.session_state.last_csv:
         c_save, c_pdf = st.columns([1, 1], gap="small")
         with c_save:
-            st.markdown('<div class="save-chat-btn">', unsafe_allow_html=True)
+            st.markdown('<div class="ytcc-action ytcc-btn-save">', unsafe_allow_html=True)
             if st.button("세션저장", use_container_width=True):
                 with st.spinner("세션 저장 중..."):
                     success, result = save_current_session_to_github()
@@ -2184,7 +2331,7 @@ with st.sidebar:
             st.markdown('</div>', unsafe_allow_html=True)
 
         with c_pdf:
-            st.markdown('<div class="pdf-chat-btn">', unsafe_allow_html=True)
+            st.markdown('<div class="ytcc-action ytcc-btn-save">', unsafe_allow_html=True)
             pdf_title = _session_title_for_pdf()
             render_capture_pdf_button(pdf_title, label="PDF저장")
             st.markdown('</div>', unsafe_allow_html=True)
