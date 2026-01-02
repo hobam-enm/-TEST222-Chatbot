@@ -930,12 +930,30 @@ def _verify_auth_token(token: str) -> Optional[dict]:
         return None
 
 def _logout_and_clear():
+    # 1) 세션 인증정보 제거 (기존 로직 유지)
+    _reset_chat_only(keep_auth=False)
+
+    # 2) Streamlit query params도 비우기 (가능하면)
     try:
         st.query_params.clear()
     except Exception:
         pass
-    _reset_chat_only(keep_auth=False)
-    st.rerun()
+
+    # 3) 브라우저 URL 자체를 "파라미터 없는 첫페이지"로 강제 이동
+    #    (auth=... 이 남아 자동로그인되는 문제를 물리적으로 차단)
+    st_html(
+        """
+        <script>
+          (function () {
+            const w = window.parent || window;
+            const clean = w.location.pathname + (w.location.hash || "");
+            w.location.replace(clean);
+          })();
+        </script>
+        """,
+        height=0
+    )
+    st.stop()
 
 def require_auth():
     users = st.session_state.get("_auth_users_cache") or _load_auth_users_from_secrets()
