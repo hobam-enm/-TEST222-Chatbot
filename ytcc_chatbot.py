@@ -132,9 +132,9 @@ GLOBAL_CSS = r"""
     margin-left: 4px;
   }
 
-  /* ===== [중요] Logout Button "Text Only" Hack ===== */
-  /* 스트림릿 버튼의 모든 스타일을 강제로 벗겨냄 */
-  .logout-btn-area div[data-testid="stButton"] > button {
+  /* ===== [수정] Logout Button "Text Only" Style ===== */
+  /* logout-btn-area 클래스 내부의 버튼을 텍스트 링크처럼 보이게 강제함 */
+  .logout-btn-area button {
     background-color: transparent !important;
     border: none !important;
     box-shadow: none !important;
@@ -148,63 +148,65 @@ GLOBAL_CSS = r"""
     line-height: 1.2 !important;
     float: right;
   }
-  .logout-btn-area div[data-testid="stButton"] > button:hover {
+  .logout-btn-area button:hover {
     color: #ef4444 !important; /* Red hover */
-    background-color: transparent !important;
-    border: none !important;
     text-decoration: none !important;
+    background-color: transparent !important;
   }
-  .logout-btn-area div[data-testid="stButton"] > button:active,
-  .logout-btn-area div[data-testid="stButton"] > button:focus {
+  .logout-btn-area button:active,
+  .logout-btn-area button:focus {
     background-color: transparent !important;
     border: none !important;
-    box-shadow: none !important;
     outline: none !important;
+    box-shadow: none !important;
   }
 
 
   /* ===== Unified "Flat" Button Style ===== */
-  /* 테두리 없이(background color only) + PDF버튼 포함 */
+  /* [수정] 배경색을 #e5e7eb로 진하게 변경하여 가시성 확보 */
   .stButton button, .ytcc-cap-btn {
-    background-color: #f3f4f6 !important; /* 연한 회색 배경 */
-    border: none !important; /* 테두리 삭제 */
+    background-color: #e5e7eb !important; /* 기존 #f3f4f6 보다 진함 */
+    border: none !important;
     border-radius: 8px !important;
     color: #374151 !important;
     font-weight: 600 !important;
     font-size: 0.82rem !important;
     padding: 0.45rem 0.5rem !important;
-    box-shadow: none !important; /* 그림자 삭제 (플랫) */
+    box-shadow: none !important;
     width: 100% !important;
-    transition: background-color 0.15s ease !important;
+    transition: all 0.15s ease !important;
     box-sizing: border-box !important;
     font-family: inherit !important;
   }
 
   /* Hover Effect */
   .stButton button:hover, .ytcc-cap-btn:hover {
-    background-color: #e5e7eb !important; /* 호버시 조금 더 진한 회색 */
+    background-color: #d1d5db !important; /* 호버시 더 진하게 */
     color: #111827 !important;
   }
   
-  /* Active/Focus (눌렀을 때) */
+  /* Active/Focus */
   .stButton button:active, .ytcc-cap-btn:active {
-    background-color: #d1d5db !important;
+    background-color: #9ca3af !important;
     box-shadow: none !important;
   }
 
-  /* Primary Action (New Chat) - Slightly distinct color */
+  /* ===== [수정] New Chat Button - Dark & Pop ===== */
+  /* 새 분석 시작 버튼만 어둡게 처리하여 강조 */
   .new-chat-btn .stButton button {
-    background-color: #1f2937 !important; /* 다크 그레이 */
+    background-color: #111827 !important; /* 다크 네이비/블랙 계열 */
     color: #ffffff !important;
+    border: 1px solid #1f2937 !important;
   }
   .new-chat-btn .stButton button:hover {
-    background-color: #374151 !important;
+    background-color: #374151 !important; /* 호버시 약간 밝은 다크 */
     color: #ffffff !important;
+    border-color: #4b5563 !important;
   }
 
   /* Disabled State */
   .stButton button:disabled, .ytcc-cap-btn:disabled {
-    background-color: #f9fafb !important;
+    background-color: #f3f4f6 !important;
     color: #e5e7eb !important;
     cursor: not-allowed !important;
   }
@@ -227,7 +229,7 @@ GLOBAL_CSS = r"""
   
   /* List Items */
   .sess-name .stButton button {
-    background: transparent !important; /* 리스트는 배경 투명 */
+    background: transparent !important;
     text-align: left !important;
     padding: 0.2rem 0.3rem !important;
     color: #4b5563 !important;
@@ -238,10 +240,18 @@ GLOBAL_CSS = r"""
     background: #f3f4f6 !important;
     color: #111827 !important;
   }
+  
+  /* [수정] More Menu (...) Button - Remove Border */
   .more-menu .stButton button {
     background: transparent !important;
+    border: none !important;
     padding: 0 !important;
     color: #9ca3af !important;
+    box-shadow: none !important;
+  }
+  .more-menu .stButton button:hover {
+    color: #4b5563 !important;
+    background: transparent !important;
   }
   
   /* Login & Main Title */
@@ -547,8 +557,7 @@ def _get_cached_session_pdf_bytes() -> bytes:
 def render_pdf_capture_button(label: str, pdf_filename_base: str) -> None:
     """
     프론트에서 대화창(stChatMessage)을 '스크롤 끝까지' 캡쳐해서 PDF로 저장.
-    - reportlab 기반 PDF 대신, 화면 렌더링 그대로 저장(폰트 깨짐/레이아웃 깨짐 방지)
-    - 대화 내용이 없으면 버튼 클릭 시 안내 alert
+    [수정] 버튼 스타일을 stButton과 통일 (CSS 클래스 ytcc-cap-btn 사용)
     """
     safe = re.sub(r'[^0-9A-Za-z가-힣 _\-\(\)\[\]]+', '', (pdf_filename_base or 'chat')).strip() or "chat"
     safe = safe.replace(" ", "_")[:80]
@@ -704,29 +713,31 @@ def render_pdf_capture_button(label: str, pdf_filename_base: str) -> None:
     </script>
 
     <style>
-      /* match v3 save-button look */
+      /* [수정] 메인 CSS의 .stButton button 스타일과 일치시킴 (#e5e7eb) */
       .ytcc-cap-btn {{
         width: 100%;
-        border-radius: 14px;
-        padding: 0.42rem 0.60rem;
+        border-radius: 8px; /* match stButton */
+        padding: 0.45rem 0.5rem;
         font-size: 0.82rem;
-        font-weight: 760;
-        line-height: 1.05;
-        min-height: 2.15rem;
-        border: 1px solid #cdeedb;
-        background: #eafaf1;
-        color: #127a3a;
+        font-weight: 600;
+        line-height: 1.2;
+        min-height: 0;
+        border: none;
+        background: #e5e7eb; /* match darker gray */
+        color: #374151;
         cursor: pointer;
         box-sizing: border-box;
+        font-family: inherit;
+        transition: background-color 0.15s ease;
       }}
       .ytcc-cap-btn:hover {{
-        background: #d6f3e4;
-        border-color: #bfe8d3;
-        color: #0f6a32;
+        background: #d1d5db; /* match hover */
+        color: #111827;
       }}
       .ytcc-cap-btn:disabled {{
-        opacity: 0.70;
-        cursor: default;
+        background: #f3f4f6;
+        color: #e5e7eb;
+        cursor: not-allowed;
       }}
     </style>
     """, height=46)
@@ -802,39 +813,37 @@ def is_authenticated() -> bool:
     return bool(st.session_state.get("auth_ok") and st.session_state.get("auth_user_id"))
 
 def _qp_get() -> dict:
+    # [수정] 최신 st.query_params 사용 권장
     try:
+        # dict로 변환하여 반환
         return dict(st.query_params)
     except Exception:
-        try:
-            return st.experimental_get_query_params()
-        except Exception:
-            return {}
+        return {}
 
 def _qp_set(**kwargs):
-    # [수정] 빈 값 정리 로직
-    cleaned = {}
-    for k, v in kwargs.items():
-        if v is None: continue
-        if isinstance(v, (list, tuple)):
-            if len(v) == 0: continue
-            cleaned[k] = list(v)
-        else:
-            s = str(v).strip()
-            if s == "": continue
-            cleaned[k] = s
-
-    # 최신 Streamlit API 우선 사용
+    # [수정] 로그인 파라미터가 새로고침 시에도 유지되도록 명시적 설정
     try:
+        # 1. 기존 파라미터 모두 초기화
         st.query_params.clear()
+        
+        # 2. 유효한 값만 다시 설정
+        cleaned = {}
+        for k, v in kwargs.items():
+            if v is None: continue
+            if isinstance(v, (list, tuple)):
+                if len(v) == 0: continue
+                cleaned[k] = v[0] # 리스트는 첫번째 값만 (st.query_params 제약)
+            else:
+                s = str(v).strip()
+                if s == "": continue
+                cleaned[k] = s
+        
+        # 3. 적용
         for k, v in cleaned.items():
             st.query_params[k] = v
-        return
+            
     except Exception:
         pass
-    try:
-        st.experimental_set_query_params(**cleaned)
-    except Exception:
-        return
 
 def _b64url_encode(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).decode("utf-8").rstrip("=")
@@ -873,11 +882,11 @@ def _verify_auth_token(token: str) -> Optional[dict]:
         return None
 
 def _logout_and_clear():
-    # [수정] 쿼리 파라미터 완전 초기화 (문제2 해결)
+    # [수정] 쿼리 파라미터 완전 초기화
     try:
         st.query_params.clear()
     except:
-        _qp_set() # fallback
+        pass
     _reset_chat_only(keep_auth=False)
 
 def require_auth():
@@ -899,6 +908,10 @@ def require_auth():
             st.session_state.pop("auth_ok", None)
             st.session_state.pop("auth_user_id", None)
         else:
+            # [추가] 이미 로그인 상태라면, URL에 auth 토큰이 있는지 확인하고 없으면 박아준다 (새로고침 대비)
+            if "auth" not in qp:
+                tok = _make_auth_token(st.session_state["auth_user_id"])
+                _qp_set(auth=tok)
             return
 
     token = None
@@ -960,7 +973,7 @@ def require_auth():
             st.session_state["auth_display_name"] = rec.get("display_name", uid)
             st.session_state["client_instance_id"] = st.session_state.get("client_instance_id") or uuid4().hex[:10]
 
-            # [수정] 로그인 직후 즉시 리런 (문제1 해결)
+            # [수정] 로그인 성공 시 URL에 토큰을 확실히 박고 리런 (새로고침 시 유지 위함)
             tok = _make_auth_token(uid)
             _qp_set(auth=tok)
             st.rerun() 
