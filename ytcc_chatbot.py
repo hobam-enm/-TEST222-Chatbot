@@ -99,7 +99,7 @@ GLOBAL_CSS = r"""
     gap: 0rem !important;
   }
   [data-testid="stSidebar"] .element-container {
-    margin-bottom: 0.3rem !important;
+    margin-bottom: 0.5rem !important;
   }
   [data-testid="stSidebar"] [data-testid="column"] {
     padding: 0 !important;
@@ -2081,7 +2081,7 @@ def run_followup_turn(user_query: str):
 require_auth()
 
 with st.sidebar:
-    st.markdown('<div class="ytcc-sb-title">💬 유튜브 댓글분석 AI</div>', unsafe_allow_html=True)
+    st.markdown('<div style="height: 20px;"></div>', unsafe_allow_html=True)
 
     # --- Auth info ---
     if st.session_state.get("auth_user_id"):
