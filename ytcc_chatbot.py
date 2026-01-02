@@ -111,24 +111,29 @@ GLOBAL_CSS = r"""
     padding: 0 !important;
   }
   [data-testid="stSidebar"] [data-testid="stHorizontalBlock"]{
-    gap: 8px !important;
+    gap: 6px !important;
     margin: 0 !important;
     padding: 0 !important;
   }
-  [data-testid="stSidebar"] hr{ margin: 10px 0 !important; }
+  [data-testid="stSidebar"] [data-testid="stVerticalBlock"]{
+    gap: 6px !important;
+  }
+  [data-testid="stSidebar"] hr{ margin: 6px 0 !important; }
 
   /* ===== Sidebar header (v3 느낌 유지 + 1줄 고정) ===== */
   .ytcc-sb-title{
     font-weight: 800;
-    font-size: clamp(1.05rem, 1.4vw, 1.25rem);
-    line-height: 1.1;
+    font-size: clamp(1.10rem, 1.75vw, 1.55rem);
+    line-height: 1.05;
     margin: 0 0 8px 0;
     background: -webkit-linear-gradient(45deg, #4285F4, #9B72CB, #D96570, #F2A60C);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow: visible;
+    text-overflow: clip;
+    letter-spacing: -0.01em;
+    word-break: keep-all;
   }
   .ytcc-sb-title span{ font-weight: 800; }
 
@@ -167,13 +172,15 @@ GLOBAL_CSS = r"""
   /* ===== Sidebar action buttons (Streamlit 위젯을 v3처럼) ===== */
   .new-chat-btn .stButton button,
   .save-chat-btn .stButton button,
+  .pdf-chat-btn .ytcc-cap-btn,
   .pdf-chat-btn [data-testid="stDownloadButton"] button{
     width:100% !important;
     border-radius: 14px !important;
-    padding: 0.55rem 0.65rem !important;
-    font-size: 0.90rem !important;
-    font-weight: 750 !important;
-    line-height: 1.1 !important;
+    padding: 0.42rem 0.60rem !important;
+    font-size: 0.82rem !important;
+    font-weight: 760 !important;
+    line-height: 1.05 !important;
+    min-height: 2.15rem !important;
     border: 1px solid #e5e7eb !important;
     background: #ffffff !important;
     color:#111827 !important;
@@ -195,13 +202,26 @@ GLOBAL_CSS = r"""
     border-color:#cdeedb !important;
     color:#127a3a !important;
   }
+
+  .pdf-chat-btn .ytcc-cap-btn{
+    background:#eafaf1 !important;
+    border-color:#cdeedb !important;
+    color:#127a3a !important;
+  }
+  .pdf-chat-btn .ytcc-cap-btn:hover{
+    background:#d6f3e4 !important;
+    border-color:#bfe8d3 !important;
+    color:#0f6a32 !important;
+  }
+
   .save-chat-btn .stButton button:hover{
     background:#d6f3e4 !important;
     border-color:#bfe8d3 !important;
     color:#0f6a32 !important;
   }
 
-  .pdf-chat-btn [data-testid="stDownloadButton"] button:hover{
+  .pdf-chat-btn [data-testid="stDownloadButton"] button:hover,
+  .pdf-chat-btn .ytcc-cap-btn:hover{
     background:#f9fafb !important;
     border-color:#d1d5db !important;
   }
@@ -257,15 +277,17 @@ GLOBAL_CSS = r"""
   /* Login / Main title one-line */
   .ytcc-login-title, .ytcc-main-title{
     font-weight: 700;
-    font-size: clamp(1.35rem, 2.2vw, 2.1rem);
-    line-height: 1.1;
+    font-size: clamp(1.10rem, 2.0vw, 2.10rem);
+    line-height: 1.05;
     margin: 0;
     background: -webkit-linear-gradient(45deg, #4285F4, #9B72CB, #D96570, #F2A60C);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow: visible;
+    text-overflow: clip;
+    letter-spacing: -0.01em;
+    word-break: keep-all;
   }
 </style>
 """
@@ -555,6 +577,195 @@ def _get_cached_session_pdf_bytes() -> bytes:
         st.session_state["_pdf_chat_hash"] = h
         st.session_state["_pdf_bytes"] = build_session_pdf_bytes(title, user_label, st.session_state.get("chat", []))
     return st.session_state.get("_pdf_bytes") or b""
+
+
+def render_pdf_capture_button(label: str, pdf_filename_base: str) -> None:
+    """
+    프론트에서 대화창(stChatMessage)을 '스크롤 끝까지' 캡쳐해서 PDF로 저장.
+    - reportlab 기반 PDF 대신, 화면 렌더링 그대로 저장(폰트 깨짐/레이아웃 깨짐 방지)
+    - 대화 내용이 없으면 버튼 클릭 시 안내 alert
+    """
+    safe = re.sub(r'[^0-9A-Za-z가-힣 _\-\(\)\[\]]+', '', (pdf_filename_base or 'chat')).strip() or "chat"
+    safe = safe.replace(" ", "_")[:80]
+    btn_id = f"ytcc-cap-{uuid4().hex[:8]}"
+
+    st_html(f"""
+    <div style="width:100%;">
+      <button id="{btn_id}" class="ytcc-cap-btn" type="button">{label}</button>
+    </div>
+
+    <script>
+    (function(){{
+      const BTN_ID = "{btn_id}";
+      const FILE_BASE = "{safe}";
+      const btn = window.parent.document.getElementById(BTN_ID);
+      if(!btn) return;
+
+      // ---- load libs once ----
+      function loadScriptOnce(src, id){{
+        return new Promise((resolve, reject) => {{
+          const d = window.parent.document;
+          if(id && d.getElementById(id)) return resolve();
+          const s = d.createElement("script");
+          if(id) s.id = id;
+          s.src = src;
+          s.onload = () => resolve();
+          s.onerror = () => reject(new Error("failed: " + src));
+          d.head.appendChild(s);
+        }});
+      }}
+
+      async function ensureLibs(){{
+        // html2canvas
+        if(!window.parent.html2canvas){{
+          await loadScriptOnce("https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js", "ytcc-html2canvas");
+        }}
+        // jsPDF
+        if(!window.parent.jspdf){{
+          await loadScriptOnce("https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js", "ytcc-jspdf");
+        }}
+      }}
+
+      async function captureToPdf(){{
+        const doc = window.parent.document;
+
+        // Streamlit chat message blocks
+        const msgs = Array.from(doc.querySelectorAll('div[data-testid="stChatMessage"]'));
+        if(!msgs || msgs.length === 0){{
+          alert("저장할 대화가 없습니다.");
+          return;
+        }}
+
+        // Build temp container (offscreen) to capture full content
+        const tmp = doc.createElement("div");
+        tmp.style.position = "fixed";
+        tmp.style.left = "-99999px";
+        tmp.style.top = "0";
+        tmp.style.background = "white";
+        tmp.style.padding = "24px";
+        tmp.style.borderRadius = "16px";
+        tmp.style.boxSizing = "border-box";
+
+        // Calculate width based on the widest message block (avoid right-side cut)
+        let maxW = 0;
+        msgs.forEach(m => {{
+          const r = m.getBoundingClientRect();
+          if(r.width) maxW = Math.max(maxW, r.width);
+        }});
+        // A bit wider than the widest message, but clamp to a reasonable range
+        const capW = Math.max(1200, Math.min(1700, Math.ceil(maxW + 140)));
+        tmp.style.width = capW + "px";
+
+        // Clone messages
+        msgs.forEach(m => {{
+          const clone = m.cloneNode(true);
+          clone.style.width = "100%";
+          clone.style.maxWidth = "100%";
+          clone.style.boxSizing = "border-box";
+
+          // Force wrap (avoid overflow cut)
+          clone.querySelectorAll("*").forEach(el => {{
+            el.style.maxWidth = "100%";
+            el.style.boxSizing = "border-box";
+            el.style.overflowWrap = "anywhere";
+            el.style.wordBreak = "break-word";
+          }});
+
+          tmp.appendChild(clone);
+        }});
+
+        doc.body.appendChild(tmp);
+
+        try {{
+          await ensureLibs();
+
+          // Render to canvas
+          const canvas = await window.parent.html2canvas(tmp, {{
+            scale: 2,
+            backgroundColor: "#ffffff",
+            useCORS: true,
+            allowTaint: true,
+            windowWidth: capW
+          }});
+
+          const imgData = canvas.toDataURL("image/png", 1.0);
+
+          const {{ jsPDF }} = window.parent.jspdf;
+          const pdf = new jsPDF("p", "mm", "a4");
+
+          const pageW = pdf.internal.pageSize.getWidth();
+          const pageH = pdf.internal.pageSize.getHeight();
+
+          // Fit image to page width, paginate by height
+          const imgW = pageW;
+          const imgH = (canvas.height * imgW) / canvas.width;
+
+          let y = 0;
+          let remaining = imgH;
+
+          while (remaining > 0) {{
+            pdf.addImage(imgData, "PNG", 0, y, imgW, imgH, undefined, "FAST");
+            remaining -= pageH;
+            if (remaining > 0) {{
+              pdf.addPage();
+              y -= pageH;
+            }}
+          }}
+
+          pdf.save(FILE_BASE + ".pdf");
+        }} catch(e) {{
+          console.error(e);
+          alert("PDF 저장 중 오류가 발생했습니다.");
+        }} finally {{
+          try {{ tmp.remove(); }} catch(e) {{}}
+        }}
+      }}
+
+      btn.addEventListener("click", () => {{
+        // prevent double click while running
+        if(btn.dataset.busy === "1") return;
+        btn.dataset.busy = "1";
+        const old = btn.innerText;
+        btn.innerText = "저장중...";
+        btn.disabled = true;
+
+        captureToPdf().finally(() => {{
+          btn.dataset.busy = "0";
+          btn.innerText = old;
+          btn.disabled = false;
+        }});
+      }});
+    }})();
+    </script>
+
+    <style>
+      /* match v3 save-button look */
+      .ytcc-cap-btn {{
+        width: 100%;
+        border-radius: 14px;
+        padding: 0.42rem 0.60rem;
+        font-size: 0.82rem;
+        font-weight: 760;
+        line-height: 1.05;
+        min-height: 2.15rem;
+        border: 1px solid #cdeedb;
+        background: #eafaf1;
+        color: #127a3a;
+        cursor: pointer;
+        box-sizing: border-box;
+      }}
+      .ytcc-cap-btn:hover {{
+        background: #d6f3e4;
+        border-color: #bfe8d3;
+        color: #0f6a32;
+      }}
+      .ytcc-cap-btn:disabled {{
+        opacity: 0.70;
+        cursor: default;
+      }}
+    </style>
+    """, height=46)
+
 # endregion
 
 
@@ -776,7 +987,7 @@ def require_auth():
             return
 
     # --- Login Screen (Centered / Clean) ---
-    c1, c2, c3 = st.columns([1.2, 1.0, 1.2])
+    c1, c2, c3 = st.columns([1.0, 1.5, 1.0])
     with c2:
         st.markdown("<div style='height:10vh;'></div>", unsafe_allow_html=True)
 
@@ -1981,38 +2192,30 @@ with st.sidebar:
     st.markdown('</div>', unsafe_allow_html=True)
 
     # 저장 / PDF (한 행)
-    if st.session_state.chat and st.session_state.last_csv:
+    if st.session_state.chat:
         c_save, c_pdf = st.columns([1, 1], gap="small")
+
         with c_save:
             st.markdown('<div class="save-chat-btn">', unsafe_allow_html=True)
-            if st.button("세션저장", use_container_width=True):
-                with st.spinner("세션 저장 중..."):
-                    success, result = save_current_session_to_github()
-                if success:
-                    st.success(f"'{result}' 저장 완료!")
-                    time.sleep(1.2)
-                    st.rerun()
-                else:
-                    st.error(result)
+            if st.session_state.last_csv:
+                if st.button("세션저장", use_container_width=True):
+                    with st.spinner("세션 저장 중..."):
+                        success, result = save_current_session_to_github()
+                    if success:
+                        st.success(f"'{result}' 저장 완료!")
+                        time.sleep(1.2)
+                        st.rerun()
+                    else:
+                        st.error(result)
+            else:
+                st.button("세션저장", use_container_width=True, disabled=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
         with c_pdf:
             st.markdown('<div class="pdf-chat-btn">', unsafe_allow_html=True)
-            pdf_bytes = _get_cached_session_pdf_bytes()
             pdf_title = _session_title_for_pdf()
-            if not pdf_bytes:
-                st.caption('PDF 기능 사용을 위해 reportlab 설치가 필요합니다.')
-            else:
-                st.download_button(
-                "PDF저장",
-                data=pdf_bytes,
-                file_name=f"{pdf_title}.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-            )
+            render_pdf_capture_button("PDF저장", pdf_title)
             st.markdown('</div>', unsafe_allow_html=True)
-
-        st.markdown('</div>', unsafe_allow_html=True)
 
 
 
