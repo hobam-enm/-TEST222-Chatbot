@@ -87,23 +87,20 @@ GLOBAL_CSS = r"""
     max-width: 1200px;
   }
 
-  /* ===== Sidebar Layout & EXTREME Spacing Control ===== */
+  /* ===== Sidebar Layout Control ===== */
   [data-testid="stSidebar"]{
     background-color: #f9fafb;
-    border-right: 1px solid #e5e7eb;
+    border-right: 1px solid #efefef;
   }
   [data-testid="stSidebarUserContent"] {
-    padding: 1rem 0.8rem !important; /* 전체 패딩 축소 */
+    padding: 1rem 0.8rem !important;
   }
-  
-  /* [핵심] 사이드바 내부 요소 간격 초강력 축소 */
   [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
-    gap: 0rem !important; /* 블록 간격 0 */
+    gap: 0rem !important;
   }
   [data-testid="stSidebar"] .element-container {
-    margin-bottom: 0.3rem !important; /* 요소 하단 여백 최소화 */
+    margin-bottom: 0.3rem !important;
   }
-  /* 컬럼 내부 간격 제거 */
   [data-testid="stSidebar"] [data-testid="column"] {
     padding: 0 !important;
   }
@@ -118,18 +115,10 @@ GLOBAL_CSS = r"""
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     letter-spacing: -0.5px;
-    white-space: nowrap; /* [수정] 줄바꿈 절대 방지 */
+    white-space: nowrap; 
   }
 
-  /* User Profile Row (Flexbox for alignment) */
-  .user-row-container {
-    display: flex;
-    justify-content: space-between;
-    align-items: center; /* 수직 중앙 정렬 */
-    padding-bottom: 10px;
-    border-bottom: 1px solid #e5e7eb;
-    margin-bottom: 10px !important;
-  }
+  /* User Profile */
   .user-info-text {
     font-size: 0.85rem;
     font-weight: 700;
@@ -143,68 +132,88 @@ GLOBAL_CSS = r"""
     margin-left: 4px;
   }
 
-  /* Logout Button as Text Link (No Box) */
-  .logout-btn-area button {
-    background: transparent !important;
+  /* ===== [중요] Logout Button "Text Only" Hack ===== */
+  /* 스트림릿 버튼의 모든 스타일을 강제로 벗겨냄 */
+  .logout-btn-area div[data-testid="stButton"] > button {
+    background-color: transparent !important;
     border: none !important;
     box-shadow: none !important;
     padding: 0 !important;
-    color: #6b7280 !important;
-    font-size: 0.75rem !important;
-    text-decoration: underline;
     margin: 0 !important;
+    color: #9ca3af !important;
+    font-size: 0.75rem !important;
+    text-decoration: underline !important;
+    min-height: 0 !important;
     height: auto !important;
-    min-height: auto !important;
-    line-height: 1.5 !important;
+    line-height: 1.2 !important;
     float: right;
   }
-  .logout-btn-area button:hover {
-    color: #ef4444 !important;
-    text-decoration: none;
+  .logout-btn-area div[data-testid="stButton"] > button:hover {
+    color: #ef4444 !important; /* Red hover */
+    background-color: transparent !important;
+    border: none !important;
+    text-decoration: none !important;
+  }
+  .logout-btn-area div[data-testid="stButton"] > button:active,
+  .logout-btn-area div[data-testid="stButton"] > button:focus {
+    background-color: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    outline: none !important;
   }
 
-  /* ===== Unified Button Style (Modern Flat White) ===== */
-  /* 모든 버튼(Streamlit & Custom PDF) 스타일 통일 */
+
+  /* ===== Unified "Flat" Button Style ===== */
+  /* 테두리 없이(background color only) + PDF버튼 포함 */
   .stButton button, .ytcc-cap-btn {
-    background-color: #ffffff !important;
-    border: 1px solid #e5e7eb !important;
+    background-color: #f3f4f6 !important; /* 연한 회색 배경 */
+    border: none !important; /* 테두리 삭제 */
     border-radius: 8px !important;
     color: #374151 !important;
     font-weight: 600 !important;
     font-size: 0.82rem !important;
-    padding: 0.4rem 0.5rem !important;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.03) !important;
+    padding: 0.45rem 0.5rem !important;
+    box-shadow: none !important; /* 그림자 삭제 (플랫) */
     width: 100% !important;
-    transition: all 0.1s ease !important;
+    transition: background-color 0.15s ease !important;
     box-sizing: border-box !important;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+    font-family: inherit !important;
   }
 
   /* Hover Effect */
   .stButton button:hover, .ytcc-cap-btn:hover {
-    background-color: #f9fafb !important;
-    border-color: #d1d5db !important;
+    background-color: #e5e7eb !important; /* 호버시 조금 더 진한 회색 */
     color: #111827 !important;
   }
   
-  /* Primary Action (New Chat) - Slightly Darker Text/Border for differentiation? No, requested clean */
+  /* Active/Focus (눌렀을 때) */
+  .stButton button:active, .ytcc-cap-btn:active {
+    background-color: #d1d5db !important;
+    box-shadow: none !important;
+  }
+
+  /* Primary Action (New Chat) - Slightly distinct color */
   .new-chat-btn .stButton button {
-    border-color: #d1d5db !important; /* 조금 더 진한 테두리로 구분 */
-    background-color: #fcfcfc !important;
+    background-color: #1f2937 !important; /* 다크 그레이 */
+    color: #ffffff !important;
+  }
+  .new-chat-btn .stButton button:hover {
+    background-color: #374151 !important;
+    color: #ffffff !important;
   }
 
   /* Disabled State */
   .stButton button:disabled, .ytcc-cap-btn:disabled {
-    background-color: #f3f4f6 !important;
-    color: #d1d5db !important;
-    border-color: #e5e7eb !important;
+    background-color: #f9fafb !important;
+    color: #e5e7eb !important;
     cursor: not-allowed !important;
   }
 
-  /* ===== Session List Compact ===== */
+
+  /* ===== Session List Styling ===== */
   .session-list-container {
     margin-top: 5px !important;
-    border-top: 1px solid #e5e7eb;
+    border-top: 1px solid #efefef;
     padding-top: 8px !important;
   }
   .session-header {
@@ -218,42 +227,32 @@ GLOBAL_CSS = r"""
   
   /* List Items */
   .sess-name .stButton button {
-    border: none !important;
-    box-shadow: none !important;
+    background: transparent !important; /* 리스트는 배경 투명 */
     text-align: left !important;
-    padding: 0.2rem 0.3rem !important; /* 리스트 내부 여백 축소 */
-    background: transparent !important;
+    padding: 0.2rem 0.3rem !important;
     color: #4b5563 !important;
     font-weight: 500 !important;
     font-size: 0.85rem !important;
-    height: auto !important;
-    min-height: auto !important;
   }
   .sess-name .stButton button:hover {
     background: #f3f4f6 !important;
     color: #111827 !important;
   }
-  
-  /* More Menu Dots */
   .more-menu .stButton button {
-    border: none !important;
-    box-shadow: none !important;
     background: transparent !important;
-    color: #9ca3af !important;
     padding: 0 !important;
-    min-height: auto !important;
+    color: #9ca3af !important;
   }
   
-  /* Main Title Area (Login Page) */
+  /* Login & Main Title */
   .ytcc-login-title, .ytcc-main-title {
     font-weight: 800;
-    /* 폰트 사이즈 반응형 조정 + 줄바꿈 방지 */
     font-size: clamp(1.4rem, 2.2vw, 2.5rem); 
     background: linear-gradient(45deg, #4285F4, #9B72CB, #D96570, #F2A60C);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     margin-bottom: 0.5rem;
-    white-space: nowrap !important; /* [핵심] 줄바꿈 방지 */
+    white-space: nowrap !important;
   }
 </style>
 """
@@ -741,12 +740,6 @@ import hashlib
 from typing import Dict, Optional
 
 def _load_auth_users_from_secrets() -> Dict[str, dict]:
-    """Load users from Streamlit secrets.
-
-    Supports:
-      - [[users]] ... at root
-      - [auth] ... with users list (depending on secrets layout)
-    """
     users = []
     try:
         if "users" in st.secrets:
@@ -777,7 +770,6 @@ def _get_auth_pepper() -> str:
     return ""
 
 def _pbkdf2_sha256_verify(password: str, encoded: str, pepper: str = "") -> bool:
-    """Verify 'pbkdf2_sha256$iters$salt_b64$dk_b64'"""
     try:
         parts = encoded.split("$")
         if len(parts) != 4 or parts[0] != "pbkdf2_sha256":
@@ -793,16 +785,11 @@ def _pbkdf2_sha256_verify(password: str, encoded: str, pepper: str = "") -> bool
 def verify_user_password(user_rec: dict, password: str) -> bool:
     pepper = _get_auth_pepper()
     pw_hash = (user_rec.get("pw_hash") or "").strip()
-
-    # Recommended: pbkdf2_sha256$iters$salt_b64$dk_b64
     if pw_hash.startswith("pbkdf2_sha256$"):
         return _pbkdf2_sha256_verify(password, pw_hash, pepper=pepper)
-
-    # Legacy fallback: plain 'pw'
     pw_plain = user_rec.get("pw")
     if isinstance(pw_plain, str) and pw_plain:
         return hmac.compare_digest(pw_plain, password)
-
     return False
 
 def get_current_user() -> Optional[dict]:
@@ -815,9 +802,7 @@ def is_authenticated() -> bool:
     return bool(st.session_state.get("auth_ok") and st.session_state.get("auth_user_id"))
 
 def _qp_get() -> dict:
-    """Query params helper (supports both old/new Streamlit APIs)."""
     try:
-        # Streamlit >= 1.30
         return dict(st.query_params)
     except Exception:
         try:
@@ -826,22 +811,19 @@ def _qp_get() -> dict:
             return {}
 
 def _qp_set(**kwargs):
-    """Set query params helper (supports both old/new Streamlit APIs)."""
-    # Normalize: remove keys with None/""/[] values
+    # [수정] 빈 값 정리 로직
     cleaned = {}
     for k, v in kwargs.items():
-        if v is None:
-            continue
+        if v is None: continue
         if isinstance(v, (list, tuple)):
-            if len(v) == 0:
-                continue
+            if len(v) == 0: continue
             cleaned[k] = list(v)
         else:
             s = str(v).strip()
-            if s == "":
-                continue
+            if s == "": continue
             cleaned[k] = s
 
+    # 최신 Streamlit API 우선 사용
     try:
         st.query_params.clear()
         for k, v in cleaned.items():
@@ -849,7 +831,6 @@ def _qp_set(**kwargs):
         return
     except Exception:
         pass
-
     try:
         st.experimental_set_query_params(**cleaned)
     except Exception:
@@ -863,7 +844,6 @@ def _b64url_decode(s: str) -> bytes:
     return base64.urlsafe_b64decode((s + pad).encode("utf-8"))
 
 def _auth_signing_secret() -> bytes:
-    # Prefer pepper; fallback to repo token; fallback to a fixed dev string (last resort).
     pepper = _get_auth_pepper()
     secret = pepper or str(st.secrets.get("AUTH_SIGNING_SECRET", "") or "") or (GITHUB_TOKEN or "") or "dev-secret"
     return secret.encode("utf-8")
@@ -879,49 +859,40 @@ def _make_auth_token(user_id: str, ttl_hours: int = None) -> str:
 
 def _verify_auth_token(token: str) -> Optional[dict]:
     try:
-        if not token or "." not in token:
-            return None
+        if not token or "." not in token: return None
         body, sig = token.split(".", 1)
         expect = hmac.new(_auth_signing_secret(), body.encode("utf-8"), hashlib.sha256).digest()
-        if not hmac.compare_digest(_b64url_decode(sig), expect):
-            return None
+        if not hmac.compare_digest(_b64url_decode(sig), expect): return None
         payload = json.loads(_b64url_decode(body).decode("utf-8"))
-        if not isinstance(payload, dict):
-            return None
-        if int(payload.get("exp", 0)) < int(time.time()):
-            return None
+        if not isinstance(payload, dict): return None
+        if int(payload.get("exp", 0)) < int(time.time()): return None
         uid = (payload.get("uid") or "").strip()
-        if not uid:
-            return None
+        if not uid: return None
         return payload
     except Exception:
         return None
 
 def _logout_and_clear():
-    # Keep query params clean
-    _qp_set()  # clears all
-    # clear in-memory session
+    # [수정] 쿼리 파라미터 완전 초기화 (문제2 해결)
+    try:
+        st.query_params.clear()
+    except:
+        _qp_set() # fallback
     _reset_chat_only(keep_auth=False)
 
 def require_auth():
-    """Gate the app behind a login screen if users are configured in secrets.
-
-    - 로그인 성공 시 URL query param(auth=...)에 서명 토큰을 심어서 새로고침에도 로그인 유지
-    - 로그아웃은 ?logout=1 링크로 처리(버튼 박스 문제 회피)
-    """
     users = st.session_state.get("_auth_users_cache") or _load_auth_users_from_secrets()
     st.session_state["_auth_users_cache"] = users
     auth_enabled = bool(users)
 
     if not auth_enabled:
-        return  # no users configured -> open access
+        return
 
     # Handle logout via query param
     qp = _qp_get()
     if "logout" in qp:
         _logout_and_clear()
 
-    # Already authenticated in this session?
     if is_authenticated():
         u = get_current_user() or {}
         if u and (u.get("active") is False):
@@ -930,15 +901,12 @@ def require_auth():
         else:
             return
 
-    # Try restore from signed token in query params
     token = None
     try:
         if "auth" in qp:
             token = qp.get("auth")
-            if isinstance(token, list):
-                token = token[0] if token else None
-    except Exception:
-        token = None
+            if isinstance(token, list): token = token[0] if token else None
+    except Exception: token = None
 
     payload = _verify_auth_token(str(token or ""))
     if payload:
@@ -952,22 +920,18 @@ def require_auth():
             st.session_state["client_instance_id"] = st.session_state.get("client_instance_id") or uuid4().hex[:10]
             return
 
-    # --- Login Screen (Centered / Clean) ---
+    # --- Login Screen ---
     c1, c2, c3 = st.columns([1.0, 1.5, 1.0])
     with c2:
         st.markdown("<div style='height:10vh;'></div>", unsafe_allow_html=True)
-
-        # 앱 이름
         st.markdown(
             """
             <div style="text-align:center;">
-              <div class="ytcc-login-title">💬 유튜브 댓글분석: <span>AI 챗봇</span></div>
+              <div class="ytcc-login-title">💬 유튜브 댓글분석 AI</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-
-        # 로그인 타이틀
         st.markdown(
             "<div style='text-align:center; margin-top:0.9rem; margin-bottom:0.6rem;'>"
             "<h2 style='font-size:1.3rem; font-weight:650; margin:0; color:#111827;'>로그인</h2>"
@@ -996,9 +960,10 @@ def require_auth():
             st.session_state["auth_display_name"] = rec.get("display_name", uid)
             st.session_state["client_instance_id"] = st.session_state.get("client_instance_id") or uuid4().hex[:10]
 
-            # persist login in query params
+            # [수정] 로그인 직후 즉시 리런 (문제1 해결)
             tok = _make_auth_token(uid)
             _qp_set(auth=tok)
+            st.rerun() 
             return
 
     st.stop()
@@ -2136,17 +2101,14 @@ require_auth()
 with st.sidebar:
     st.markdown('<div class="ytcc-sb-title">💬 유튜브 댓글분석 AI</div>', unsafe_allow_html=True)
 
-    # --- Auth info (Compact & Inline Logout) ---
+    # --- Auth info ---
     if st.session_state.get("auth_user_id"):
         disp = st.session_state.get("auth_display_name", st.session_state.get("auth_user_id"))
         role = st.session_state.get("auth_role", "user")
         
-        # [핵심] 이름과 로그아웃 버튼을 한 줄에 배치
-        # st.columns의 gap을 "small"로 하고, CSS로 버튼을 텍스트처럼 보이게 처리
+        # User & Logout Row
         c_user, c_logout = st.columns([0.75, 0.25], gap="small")
-        
         with c_user:
-            # HTML로 텍스트 렌더링 (마진 제거)
             st.markdown(f"""
             <div style="display:flex; align-items:baseline; padding-top:4px;">
                 <span class="user-info-text">{disp}</span>
@@ -2155,25 +2117,24 @@ with st.sidebar:
             """, unsafe_allow_html=True)
             
         with c_logout:
-            # 이 버튼은 CSS(.logout-btn-area)에 의해 투명한 텍스트 링크로 변함
+            # [수정] 버튼 스타일을 벗기기 위한 Wrapper Class
             st.markdown('<div class="logout-btn-area">', unsafe_allow_html=True)
             if st.button("로그아웃", key="logout_btn"):
                 _logout_and_clear()
                 st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
             
-        st.markdown('<div style="border-bottom:1px solid #e5e7eb; margin-bottom:12px; margin-top:2px;"></div>', unsafe_allow_html=True)
+        st.markdown('<div style="border-bottom:1px solid #efefef; margin-bottom:12px; margin-top:2px;"></div>', unsafe_allow_html=True)
 
-
-    # --- Main Actions (Drastically reduced spacing) ---
-    # 1. New Chat
+    # --- Main Actions ---
+    # 1. New Chat (Dark Button)
     st.markdown('<div class="new-chat-btn" style="margin-bottom: 6px;">', unsafe_allow_html=True)
     if st.button("＋ 새 분석 시작", use_container_width=True):
         _reset_chat_only(keep_auth=True)
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
     
-    # 2. Save Actions (Side by Side, Consistent Style)
+    # 2. Save Actions (Flat Gray Buttons)
     if st.session_state.chat:
         c1, c2 = st.columns(2, gap="small") 
         with c1:
@@ -2192,8 +2153,9 @@ with st.sidebar:
             st.markdown('</div>', unsafe_allow_html=True)
         
         with c2:
-            st.markdown('<div class="save-chat-btn">', unsafe_allow_html=True) # PDF class 동일하게 적용
+            st.markdown('<div class="save-chat-btn">', unsafe_allow_html=True)
             pdf_title = _session_title_for_pdf()
+            # PDF 버튼도 이제 CSS에서 .ytcc-cap-btn 클래스로 동일 스타일 적용됨
             render_pdf_capture_button("PDF 저장", pdf_title)
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -2225,7 +2187,6 @@ with st.sidebar:
                                 st.session_state.pop('editing_session', None)
                                 st.rerun()
                     else:
-                        # 리스트 간격도 gap="small"로 최대한 붙임
                         sc1, sc2 = st.columns([0.85, 0.15], gap="small")
                         with sc1:
                             st.markdown('<div class="sess-name">', unsafe_allow_html=True)
@@ -2289,7 +2250,6 @@ if not st.session_state.chat:
 </div>
 """, unsafe_allow_html=True)
 
-    # [토글 버튼]
     _, col_toggle, _ = st.columns([1.3, 1, 1.3])
     with col_toggle:
         st.write("") 
