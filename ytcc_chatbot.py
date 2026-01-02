@@ -2052,6 +2052,7 @@ def run_followup_turn(user_query: str):
     followup_instruction = (
         "🛑 [지시사항 변경] 🛑\n"
         "지금부터는 전체 요약가가 아니라, 사용자의 질문 하나하나를 파고드는 **'심층 분석가'**로서 행동해.\n"
+        "첫 질문에 대한 응답처럼 규격화된 HTML로 주지 않아도 된다.\n"
         "이전의 요약 미션은 잊어. 오직 아래 [현재 질문]에만 집중해서 답해.\n\n"
         "=== 답변 전략 ===\n"
         "1. 질문의 의도(속성/대상)를 먼저 파악해라.\n"
@@ -2068,7 +2069,7 @@ def run_followup_turn(user_query: str):
         f"[기간(KST)]: {schema.get('start_iso', '?')} ~ {schema.get('end_iso', '?')}\n"
     )
 
-    with st.spinner("💬 심층 분석 중... (Smart Cache)"):
+    with st.spinner("💬 답변 생성 중... "):
         # call_gemini_smart_cache 호출 (large_context_text=None -> 기존 캐시 사용)
         response_raw = call_gemini_smart_cache(GEMINI_MODEL, GEMINI_API_KEYS, "", user_payload, large_context_text=None)
         response = tidy_answer(response_raw)
