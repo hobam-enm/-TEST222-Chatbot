@@ -382,25 +382,23 @@ def load_from_firebase(file_name):
         print(f"Load Error: {e}")
         return []
 
+# 1. 서버 전체가 공유하는 '타임스탬프 저장소' 만들기
+@st.cache_resource
+def get_global_time_tracker():
+    return {}
+
 def get_all_pgc_data():
-    """
-    [핵심 동기화 로직]
-    1. Firebase의 모든 채널 문서(token_*.json)를 스캔합니다.
-    2. updated_at(타임스탬프)을 확인하여, 세션보다 최신이면 캐시를 비웁니다.
-    3. 최신 데이터를 모두 로딩하여 반환합니다.
-    """
     db = init_firebase()
     if not db: return []
 
     all_pgc_videos = []
     
     try:
-        # 1. 문서 목록 및 타임스탬프 확인 (가벼운 작업)
         docs = db.collection('yt_cache').stream()
         
-        # 세션에 저장된 마지막 업데이트 시간
-        if 'last_fb_updates' not in st.session_state:
-            st.session_state['last_fb_updates'] = {}
+        # [변경] session_state 대신 전역 저장소(tracker) 사용
+        # 이제 로그인을 다시 해도 이 기록은 안 지워집니다!
+        tracker = get_global_time_tracker()
             
         need_refresh = False
         doc_list = []
@@ -412,21 +410,18 @@ def get_all_pgc_data():
             
             doc_list.append(doc_id)
             
-            # 타임스탬프 비교 (서버 시간 문자열화)
             current_ts_str = str(updated_at) if updated_at else "none"
-            last_ts_str = st.session_state['last_fb_updates'].get(doc_id)
+            # 전역 저장소에서 확인
+            last_ts_str = tracker.get(doc_id)
             
             if last_ts_str != current_ts_str:
-                # 업데이트 감지!
                 need_refresh = True
-                st.session_state['last_fb_updates'][doc_id] = current_ts_str
+                tracker[doc_id] = current_ts_str # 전역 저장소 업데이트
         
-        # 2. 변경사항 있으면 캐시 초기화
         if need_refresh:
             load_from_firebase.clear()
-            # print("🔄 [Sync] Firebase 업데이트 감지 -> 캐시 갱신")
+            # print("🔄 [Sync] 업데이트 감지 -> 캐시 갱신")
 
-        # 3. 데이터 로딩 (캐시 또는 실시간)
         for doc_id in doc_list:
             vids = load_from_firebase(doc_id)
             all_pgc_videos.extend(vids)
