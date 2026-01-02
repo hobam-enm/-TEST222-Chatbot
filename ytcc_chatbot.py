@@ -123,7 +123,7 @@ GLOBAL_CSS = r"""
   /* ===== Sidebar header (v3 느낌 유지 + 1줄 고정) ===== */
   .ytcc-sb-title{
     font-weight: 800;
-    font-size: clamp(1.10rem, 1.65vw, 1.40rem);
+    font-size: clamp(1.10rem, 1.65vw, 1.45rem);
     line-height: 1.05;
     margin: 0 0 8px 0;
     background: -webkit-linear-gradient(45deg, #4285F4, #9B72CB, #D96570, #F2A60C);
@@ -167,24 +167,7 @@ GLOBAL_CSS = r"""
     line-height:1.1;
     white-space: nowrap;
   }
-  
-  /* 로그아웃 버튼을 링크처럼 */
-.ytcc-logout-btn .stButton button{
-  background: transparent !important;
-  border: none !important;
-  padding: 0 !important;
-  margin: 0 !important;
-  min-height: unset !important;
-  height: auto !important;
-  color: #6b7280 !important;
-  text-decoration: underline !important;
-  font-size: 0.78rem !important;
-  font-weight: 600 !important;
-  box-shadow: none !important;
-}
-.ytcc-logout-btn .stButton button:hover{
-  color:#374151 !important;
-}
+  .ytcc-sb-logout:hover{ color:#374151; }
 
 /* ===== Sidebar action buttons (새채팅/세션저장/PDF저장 스타일 통일) ===== */
 .new-chat-btn .stButton button,
