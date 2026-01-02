@@ -1,4 +1,3 @@
-
 # region [Imports & Setup]
 import streamlit as st
 from io import BytesIO
@@ -25,6 +24,11 @@ import google.generativeai as genai
 from google.generativeai import caching  # [추가] 캐싱 모듈
 from streamlit.components.v1 import html as st_html
 
+# [추가] 파이어베이스 연동
+import firebase_admin
+from firebase_admin import credentials
+from firebase_admin import firestore
+
 # 경로 및 GitHub 설정
 BASE_DIR = "/tmp"
 SESS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -34,11 +38,9 @@ GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
 GITHUB_REPO = st.secrets.get("GITHUB_REPO", "")
 GITHUB_BRANCH = st.secrets.get("GITHUB_BRANCH", "main")
 
-
 # (추가) 1차 분석 프롬프트 파일 (레포에 함께 커밋해두면 자동 적용)
 FIRST_TURN_PROMPT_FILE = "1차 질문 프롬프트.md"
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
-PGC_CACHE_DIR = os.path.join(REPO_DIR, "pgc_cache")
 
 def load_first_turn_system_prompt() -> str:
     """레포의 '1차 질문 프롬프트.md'만 사용한다(폴백 없음)."""
@@ -135,7 +137,6 @@ GLOBAL_CSS = r"""
   /* ===== Button Styling Strategy ===== */
   
   /* 1. Default (Secondary) Buttons: Save, Session List, etc. */
-  /* [수정] 배경색을 #f3f4f6 (아주 연한 회색)으로 통일 */
   div[data-testid="stButton"] button[kind="secondary"] {
     background-color: #f3f4f6 !important; 
     border: none !important;
@@ -161,7 +162,6 @@ GLOBAL_CSS = r"""
   }
 
   /* 2. Primary Button: New Analysis Start */
-  /* [수정] type="primary" 버튼은 Dark Navy (#111827)로 강제 적용 */
   div[data-testid="stButton"] button[kind="primary"] {
     background-color: #111827 !important; 
     border: 1px solid #1f2937 !important;
@@ -191,7 +191,6 @@ GLOBAL_CSS = r"""
     cursor: not-allowed !important;
     border-color: transparent !important;
   }
-
 
   /* ===== Session List Styling ===== */
   .session-list-container {
@@ -256,34 +255,27 @@ st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
 _YT_FALLBACK, _GEM_FALLBACK = [], []
 YT_API_KEYS       = list(st.secrets.get("YT_API_KEYS", [])) or _YT_FALLBACK
 GEMINI_API_KEYS   = list(st.secrets.get("GEMINI_API_KEYS", [])) or _GEM_FALLBACK
-GEMINI_MODEL      = "gemini-3-flash-preview"  
+GEMINI_MODEL      = "gemini-1.5-flash"  
 GEMINI_TIMEOUT    = 120
 GEMINI_MAX_TOKENS = 8192
 MAX_TOTAL_COMMENTS   = 120_000
 MAX_COMMENTS_PER_VID = 4_000
-CACHE_TTL_MINUTES    = 20  # [추가] 캐시 수명 (분)
+CACHE_TTL_MINUTES    = 20 
 
 # [추가] Gemini 동시 호출(In-flight) 제한
 MAX_GEMINI_INFLIGHT = max(1, int(st.secrets.get("MAX_GEMINI_INFLIGHT", 3) or 3))
 GEMINI_INFLIGHT_WAIT_SEC = int(st.secrets.get("GEMINI_INFLIGHT_WAIT_SEC", 120) or 120)
 
-# 프로세스 전역 세마포어 (동시 Gemini 호출 제한)
 _GEMINI_SEM = threading.BoundedSemaphore(MAX_GEMINI_INFLIGHT)
 _GEMINI_TLOCAL = threading.local()
 
 class GeminiInflightSlot:
-    """Gemini API 호출 동시성 제한.
-
-    - 동일 스레드에서 중첩 호출(캐시 -> 폴백 등) 시 데드락 방지.
-    - 슬롯이 없으면 최대 GEMINI_INFLIGHT_WAIT_SEC 동안 대기.
-    """
     def __init__(self, wait_sec: int = None):
         self.wait_sec = GEMINI_INFLIGHT_WAIT_SEC if wait_sec is None else int(wait_sec)
         self.acquired = False
 
     def __enter__(self):
         if getattr(_GEMINI_TLOCAL, "held", False):
-            # 재진입: 이미 슬롯 보유 (중첩 호출 데드락 방지)
             return self
 
         deadline = time.time() + max(0, self.wait_sec)
@@ -312,7 +304,7 @@ def ensure_state():
         "loaded_session_name": None,
         "own_ip_mode": False,
         "own_ip_toggle_prev": None,
-        "current_cache": None, # [추가] 캐시 정보 저장용
+        "current_cache": None,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -320,12 +312,10 @@ def ensure_state():
 
 
 def _reset_chat_only(keep_auth: bool = True):
-    """전체 clear() 대신, 대화/분석 상태만 안전하게 초기화."""
     auth_keys = {
         "auth_ok", "auth_user_id", "auth_role", "auth_display_name",
         "client_instance_id", "_auth_users_cache"
     }
-    # 흐름 제어 키가 있다면 여기 유지(앱 내에서 사용 중이면)
     safe_flow_keys = {"session_to_load", "session_to_delete"}
     keep = set()
     if keep_auth:
@@ -343,10 +333,153 @@ ensure_state()
 # endregion
 
 
+# region [Firebase Integration: Sync & Load]
+# ==========================================
+# ytan과 동일하게 Firebase에서 데이터를 읽어옵니다.
+# 단, 여기는 '읽기 전용'이며, 업데이트 감지 로직이 추가됩니다.
+# ==========================================
+
+def init_firebase():
+    """파이어베이스 앱 초기화 (싱글톤)"""
+    try:
+        if not firebase_admin._apps:
+            if "firebase" not in st.secrets:
+                return None
+            cred_dict = dict(st.secrets["firebase"])
+            cred = credentials.Certificate(cred_dict)
+            firebase_admin.initialize_app(cred)
+        return firestore.client()
+    except Exception as e:
+        print(f"Firebase Init Error: {e}")
+        return None
+
+@st.cache_data(ttl=90000, show_spinner=False)
+def load_from_firebase(file_name):
+    """
+    ytan이 저장한 청크(Chunk) 데이터를 읽어서 하나로 합칩니다.
+    캐시 유효기간: 25시간 (ytan과 동일)
+    """
+    try:
+        db = init_firebase()
+        if not db: return []
+
+        doc_ref = db.collection('yt_cache').document(file_name)
+        main_doc = doc_ref.get()
+        if not main_doc.exists:
+            return []
+
+        chunks_stream = doc_ref.collection('chunks').stream()
+        sorted_chunks = sorted(chunks_stream, key=lambda x: int(x.id) if x.id.isdigit() else x.id)
+        
+        all_videos = []
+        for chunk_doc in sorted_chunks:
+            chunk_data = chunk_doc.to_dict().get('data', [])
+            all_videos.extend(chunk_data)
+            
+        return all_videos
+
+    except Exception as e:
+        print(f"Load Error: {e}")
+        return []
+
+def get_all_pgc_data():
+    """
+    [핵심 동기화 로직]
+    1. Firebase의 모든 채널 문서(token_*.json)를 스캔합니다.
+    2. updated_at(타임스탬프)을 확인하여, 세션보다 최신이면 캐시를 비웁니다.
+    3. 최신 데이터를 모두 로딩하여 반환합니다.
+    """
+    db = init_firebase()
+    if not db: return []
+
+    all_pgc_videos = []
+    
+    try:
+        # 1. 문서 목록 및 타임스탬프 확인 (가벼운 작업)
+        docs = db.collection('yt_cache').stream()
+        
+        # 세션에 저장된 마지막 업데이트 시간
+        if 'last_fb_updates' not in st.session_state:
+            st.session_state['last_fb_updates'] = {}
+            
+        need_refresh = False
+        doc_list = []
+
+        for doc in docs:
+            d_data = doc.to_dict()
+            updated_at = d_data.get('updated_at')
+            doc_id = doc.id
+            
+            doc_list.append(doc_id)
+            
+            # 타임스탬프 비교 (서버 시간 문자열화)
+            current_ts_str = str(updated_at) if updated_at else "none"
+            last_ts_str = st.session_state['last_fb_updates'].get(doc_id)
+            
+            if last_ts_str != current_ts_str:
+                # 업데이트 감지!
+                need_refresh = True
+                st.session_state['last_fb_updates'][doc_id] = current_ts_str
+        
+        # 2. 변경사항 있으면 캐시 초기화
+        if need_refresh:
+            load_from_firebase.clear()
+            # print("🔄 [Sync] Firebase 업데이트 감지 -> 캐시 갱신")
+
+        # 3. 데이터 로딩 (캐시 또는 실시간)
+        for doc_id in doc_list:
+            vids = load_from_firebase(doc_id)
+            all_pgc_videos.extend(vids)
+
+    except Exception as e:
+        print(f"Sync Error: {e}")
+        return []
+        
+    return all_pgc_videos
+
+def _extract_vid_from_item(obj):
+    vid = obj.get("id") or obj.get("videoId")
+    title = obj.get("title", "")
+    desc = obj.get("description", "")
+    pub_at = obj.get("date") or obj.get("publishedAt") # ytan saves as 'date'
+    return vid, title, desc, pub_at
+
+def normalize_text_for_search(text: str) -> str:
+    if not text: return ""
+    return re.sub(r'[^a-zA-Z0-9가-힣]', '', text).lower()
+
+def filter_pgc_data_by_keyword(all_data, keyword, start_dt=None, end_dt=None):
+    """메모리에 로드된 전체 데이터에서 검색"""
+    if not keyword or not all_data: return []
+    
+    kw_norm = normalize_text_for_search(keyword)
+    matched_ids = []
+    
+    for item in all_data:
+        vid, title, desc, pub_str = _extract_vid_from_item(item)
+        if not vid: continue
+        
+        # 날짜 필터
+        if (start_dt or end_dt) and pub_str:
+            try:
+                # ytan saves as ISO string (often UTC or KST depends on parser)
+                # safe parsing
+                pub_dt = datetime.fromisoformat(pub_str.replace("Z", "+00:00"))
+                if start_dt and pub_dt < start_dt: continue
+                if end_dt and pub_dt > end_dt: continue
+            except: pass
+            
+        # 키워드 필터
+        if kw_norm in normalize_text_for_search(title) or kw_norm in normalize_text_for_search(desc):
+            matched_ids.append(vid)
+            
+    return list(dict.fromkeys(matched_ids))
+# endregion
+
+
 # region [PDF Export: current session -> PDF]
 @lru_cache(maxsize=1)
 def _pdf_font_name() -> str:
-    """Return a registered font name for Korean text if available. Fallback: Helvetica."""
     try:
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
@@ -367,7 +500,6 @@ def _pdf_font_name() -> str:
     for name, fp in candidates:
         if os.path.exists(fp):
             try:
-                # Avoid duplicate registration errors
                 if name not in pdfmetrics.getRegisteredFontNames():
                     pdfmetrics.registerFont(TTFont(name, fp))
                 return name
@@ -377,39 +509,31 @@ def _pdf_font_name() -> str:
 
 
 def _strip_html_to_text(s: str) -> str:
-    """Best-effort: convert HTML-ish strings to readable text for PDF."""
     if not s:
         return ""
-    # Common line breaks
     s = re.sub(r"<\s*br\s*/?\s*>", "\n", s, flags=re.I)
     s = re.sub(r"</\s*p\s*>", "\n\n", s, flags=re.I)
     s = re.sub(r"<\s*li\s*>", "• ", s, flags=re.I)
     s = re.sub(r"</\s*li\s*>", "\n", s, flags=re.I)
-    # Remove all tags
     s = re.sub(r"<[^>]+>", "", s)
-    # Unescape entities
     try:
         import html as _html
         s = _html.unescape(s)
     except Exception:
         pass
-    # Normalize whitespace
     s = s.replace("\r\n", "\n").replace("\r", "\n")
     s = re.sub(r"\n{3,}", "\n\n", s).strip()
     return s
 
 
 def build_session_pdf_bytes(session_title: str, user_label: str, chat: list) -> bytes:
-    """
-    Export the current session as a 'captured-like' chat PDF.
-    """
     try:
         from reportlab.lib.pagesizes import A4
         from reportlab.pdfgen import canvas
         from reportlab.lib.utils import simpleSplit
         from reportlab.lib.colors import HexColor
     except ModuleNotFoundError:
-        return b""  # reportlab missing
+        return b"" 
 
     font = _pdf_font_name()
 
@@ -417,8 +541,7 @@ def build_session_pdf_bytes(session_title: str, user_label: str, chat: list) -> 
     c = canvas.Canvas(buf, pagesize=A4)
     w, h = A4
 
-    # Layout
-    margin_l, margin_r = 18 * 2.8346, 18 * 2.8346  # ~18mm
+    margin_l, margin_r = 18 * 2.8346, 18 * 2.8346 
     margin_t, margin_b = 18 * 2.8346, 18 * 2.8346
     max_bubble_w = (w - margin_l - margin_r) * 0.78
     pad_x, pad_y = 10, 8
@@ -448,17 +571,14 @@ def build_session_pdf_bytes(session_title: str, user_label: str, chat: list) -> 
         role = (role or "").lower()
         is_user = role == "user"
 
-        # Colors
         fill = HexColor("#EAFBF2") if is_user else HexColor("#F3F4F6")
         stroke = HexColor("#CDEEDB") if is_user else HexColor("#E5E7EB")
         text_color = HexColor("#0F172A")
 
-        # Clean text
         t = _strip_html_to_text(text or "")
         if not t:
             t = " "
 
-        # Split lines by paragraphs then wrap
         c.setFont(font, 10.5)
         wrapped = []
         for para in t.split("\n"):
@@ -469,35 +589,30 @@ def build_session_pdf_bytes(session_title: str, user_label: str, chat: list) -> 
         if not wrapped:
             wrapped = [" "]
 
-        bubble_h = pad_y * 2 + line_h * len(wrapped) + 10  # +label space
-        # Page break if needed
+        bubble_h = pad_y * 2 + line_h * len(wrapped) + 10  
         if y - bubble_h < margin_b:
             new_page()
 
-        # Bubble width: fit to longest line (capped)
         max_line_w = 0
         for ln in wrapped:
             try:
                 max_line_w = max(max_line_w, c.stringWidth(ln, font, 10.5))
             except Exception:
                 pass
-        bubble_w = min(max_bubble_w, max(220, max_line_w + pad_x * 2))  # minimum width
+        bubble_w = min(max_bubble_w, max(220, max_line_w + pad_x * 2)) 
 
         x = (w - margin_r - bubble_w) if is_user else margin_l
 
-        # Draw label
         c.setFillColor(HexColor("#64748B"))
         c.setFont(font, 9)
         who = "나" if is_user else "AI"
         c.drawString(x + pad_x, y, who)
         y -= 12
 
-        # Bubble rect
         c.setFillColor(fill)
         c.setStrokeColor(stroke)
         c.roundRect(x, y - (bubble_h - 12), bubble_w, bubble_h - 12, 10, fill=1, stroke=1)
 
-        # Text
         c.setFillColor(text_color)
         c.setFont(font, 10.5)
         tx = x + pad_x
@@ -506,7 +621,6 @@ def build_session_pdf_bytes(session_title: str, user_label: str, chat: list) -> 
             c.drawString(tx, ty, ln)
             ty -= line_h
 
-        # Advance y
         y = y - (bubble_h - 12) - 12
 
     draw_title()
@@ -519,15 +633,10 @@ def build_session_pdf_bytes(session_title: str, user_label: str, chat: list) -> 
 
 
 def _session_title_for_pdf() -> str:
-    """[추가] 현재 세션의 이름을 반환 (PDF 파일명용)"""
     return st.session_state.get("loaded_session_name") or "현재대화"
 
 
 def render_pdf_capture_button(label: str, pdf_filename_base: str) -> None:
-    """
-    프론트에서 대화창(stChatMessage)을 '스크롤 끝까지' 캡쳐해서 PDF로 저장.
-    [수정] CSS를 메인의 Secondary Button(#f3f4f6)과 완벽히 일치시킴
-    """
     safe = re.sub(r'[^0-9A-Za-z가-힣 _\-\(\)\[\]]+', '', (pdf_filename_base or 'chat')).strip() or "chat"
     safe = safe.replace(" ", "_")[:80]
     btn_id = f"ytcc-cap-{uuid4().hex[:8]}"
@@ -544,7 +653,6 @@ def render_pdf_capture_button(label: str, pdf_filename_base: str) -> None:
       const btn = document.getElementById(BTN_ID);
       if(!btn) return;
 
-      // ---- load libs once ----
       function loadScriptOnce(src, id){{
         return new Promise((resolve, reject) => {{
           const d = window.parent.document;
@@ -559,11 +667,9 @@ def render_pdf_capture_button(label: str, pdf_filename_base: str) -> None:
       }}
 
       async function ensureLibs(){{
-        // html2canvas
         if(!window.parent.html2canvas){{
           await loadScriptOnce("https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js", "ytcc-html2canvas");
         }}
-        // jsPDF
         if(!window.parent.jspdf){{
           await loadScriptOnce("https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js", "ytcc-jspdf");
         }}
@@ -571,15 +677,12 @@ def render_pdf_capture_button(label: str, pdf_filename_base: str) -> None:
 
       async function captureToPdf(){{
         const doc = window.parent.document;
-
-        // Streamlit chat message blocks
         const msgs = Array.from(doc.querySelectorAll('div[data-testid="stChatMessage"]'));
         if(!msgs || msgs.length === 0){{
           alert("저장할 대화가 없습니다.");
           return;
         }}
 
-        // Build temp container (offscreen) to capture full content
         const tmp = doc.createElement("div");
         tmp.style.position = "fixed";
         tmp.style.left = "-99999px";
@@ -589,31 +692,25 @@ def render_pdf_capture_button(label: str, pdf_filename_base: str) -> None:
         tmp.style.borderRadius = "16px";
         tmp.style.boxSizing = "border-box";
 
-        // Calculate width based on the widest message block (avoid right-side cut)
         let maxW = 0;
         msgs.forEach(m => {{
           const r = m.getBoundingClientRect();
           if(r.width) maxW = Math.max(maxW, r.width);
         }});
-        // A bit wider than the widest message, but clamp to a reasonable range
         const capW = Math.max(1200, Math.min(1700, Math.ceil(maxW + 140)));
         tmp.style.width = capW + "px";
 
-        // Clone messages
         msgs.forEach(m => {{
           const clone = m.cloneNode(true);
           clone.style.width = "100%";
           clone.style.maxWidth = "100%";
           clone.style.boxSizing = "border-box";
-
-          // Force wrap (avoid overflow cut)
           clone.querySelectorAll("*").forEach(el => {{
             el.style.maxWidth = "100%";
             el.style.boxSizing = "border-box";
             el.style.overflowWrap = "anywhere";
             el.style.wordBreak = "break-word";
           }});
-
           tmp.appendChild(clone);
         }});
 
@@ -621,8 +718,6 @@ def render_pdf_capture_button(label: str, pdf_filename_base: str) -> None:
 
         try {{
           await ensureLibs();
-
-          // Render to canvas
           const canvas = await window.parent.html2canvas(tmp, {{
             scale: 2,
             backgroundColor: "#ffffff",
@@ -632,14 +727,11 @@ def render_pdf_capture_button(label: str, pdf_filename_base: str) -> None:
           }});
 
           const imgData = canvas.toDataURL("image/png", 1.0);
-
           const {{ jsPDF }} = window.parent.jspdf;
           const pdf = new jsPDF("p", "mm", "a4");
 
           const pageW = pdf.internal.pageSize.getWidth();
           const pageH = pdf.internal.pageSize.getHeight();
-
-          // Fit image to page width, paginate by height
           const imgW = pageW;
           const imgH = (canvas.height * imgW) / canvas.width;
 
@@ -665,13 +757,11 @@ def render_pdf_capture_button(label: str, pdf_filename_base: str) -> None:
       }}
 
       btn.addEventListener("click", () => {{
-        // prevent double click while running
         if(btn.dataset.busy === "1") return;
         btn.dataset.busy = "1";
         const old = btn.innerText;
         btn.innerText = "저장중...";
         btn.disabled = true;
-
         captureToPdf().finally(() => {{
           btn.dataset.busy = "0";
           btn.innerText = old;
@@ -682,7 +772,6 @@ def render_pdf_capture_button(label: str, pdf_filename_base: str) -> None:
     </script>
 
     <style>
-      /* [수정] 메인 CSS의 button[kind="secondary"]와 일치시킴 (#f3f4f6) */
       .ytcc-cap-btn {{
         width: 100%;
         border-radius: 8px; 
@@ -690,9 +779,9 @@ def render_pdf_capture_button(label: str, pdf_filename_base: str) -> None:
         font-size: 0.82rem;
         font-weight: 600;
         line-height: 1.2;
-        min-height: 2.15rem; /* 높이 고정 중요 */
+        min-height: 2.15rem; 
         border: none;
-        background: #f3f4f6; /* 일치 */
+        background: #f3f4f6; 
         color: #374151;
         cursor: pointer;
         box-sizing: border-box;
@@ -703,7 +792,7 @@ def render_pdf_capture_button(label: str, pdf_filename_base: str) -> None:
         justify-content: center;
       }}
       .ytcc-cap-btn:hover {{
-        background: #e5e7eb; /* Hover 색상 일치 */
+        background: #e5e7eb; 
         color: #111827;
       }}
       .ytcc-cap-btn:disabled {{
@@ -791,7 +880,6 @@ def _qp_get() -> dict:
         return {}
 
 def _qp_set(**kwargs):
-    # [수정] URL 파라미터를 명시적으로 제어
     try:
         st.query_params.clear()
         cleaned = {}
@@ -847,13 +935,11 @@ def _verify_auth_token(token: str) -> Optional[dict]:
         return None
 
 def _logout_and_clear():
-    # [수정] 로그아웃 시 쿼리 파라미터를 명시적으로 완전히 비우고 리런
     try:
         st.query_params.clear()
     except Exception:
         pass
     _reset_chat_only(keep_auth=False)
-    # 파라미터 삭제 후 즉시 리런하여 브라우저 URL 반영
     st.rerun()
 
 def require_auth():
@@ -868,21 +954,17 @@ def require_auth():
     if "logout" in qp:
         _logout_and_clear()
 
-    # 이미 세션에 로그인 정보가 있는 경우
     if is_authenticated():
         u = get_current_user() or {}
         if u and (u.get("active") is False):
             st.session_state.pop("auth_ok", None)
             st.session_state.pop("auth_user_id", None)
         else:
-            # [추가] 로그인 상태인데 URL에 auth 파라미터가 없으면(새로고침 시 풀림 방지)
-            # 토큰을 다시 URL에 박아줌
             if "auth" not in qp:
                 tok = _make_auth_token(st.session_state["auth_user_id"])
                 _qp_set(auth=tok)
             return
 
-    # 로그인 검증 (URL 토큰 확인)
     token = None
     try:
         if "auth" in qp:
@@ -902,7 +984,6 @@ def require_auth():
             st.session_state["client_instance_id"] = st.session_state.get("client_instance_id") or uuid4().hex[:10]
             return
 
-    # --- Login Screen ---
     c1, c2, c3 = st.columns([1.0, 1.5, 1.0])
     with c2:
         st.markdown("<div style='height:10vh;'></div>", unsafe_allow_html=True)
@@ -942,7 +1023,6 @@ def require_auth():
             st.session_state["auth_display_name"] = rec.get("display_name", uid)
             st.session_state["client_instance_id"] = st.session_state.get("client_instance_id") or uuid4().hex[:10]
 
-            # [수정] 로그인 성공 시 토큰 생성 및 URL 반영
             tok = _make_auth_token(uid)
             _qp_set(auth=tok)
             st.rerun() 
@@ -987,7 +1067,6 @@ class RotatingYouTube:
         self.service = build("youtube", "v3", developerKey=key)
 
     def execute(self, factory):
-        # [수정] 키 개수만큼 반복해서 재시도 (모든 키를 다 찔러봄)
         max_retries = len(self.rot.keys)
         last_error = None
 
@@ -999,24 +1078,20 @@ class RotatingYouTube:
                 status = getattr(getattr(e, 'resp', None), 'status', None)
                 msg = (getattr(e, 'content', b'').decode('utf-8', 'ignore') or '').lower()
                 
-                # 403(Quota) 또는 429(Rate Limit) 발생 시에만 로테이션
                 if status in (403, 429) and any(t in msg for t in ["quota", "rate", "limit"]):
                     print(f"⚠️ [YouTube API] 키 만료/제한 감지. 다음 키로 교체 시도... (Current: {self.rot.idx})")
-                    self.rot.rotate() # 다음 키로 인덱스 변경
-                    self._build()     # 서비스 재구축
-                    continue          # 루프 다시 실행 (재시도)
+                    self.rot.rotate() 
+                    self._build()    
+                    continue        
                 
-                # 쿼터 문제가 아닌 다른 에러(400, 404 등)면 즉시 에러 발생
                 raise e
         
-        # 모든 키를 다 써봤는데도 안 되면 마지막 에러 발생
         raise last_error
 # endregion
 
 
 # region [GitHub & Session Management]
 def _gh_headers(token: str):
-    # Fine-grained PAT 호환을 위해 Bearer 우선
     auth = f"Bearer {token}" if token else ""
     return {
         "Authorization": auth,
@@ -1064,101 +1139,6 @@ def github_download_file(repo, branch, path_in_repo, token, local_path):
         return True
     return False
 
-
-# region [PGC Cache: Auto Sync & Search]
-def _cache_local_dir() -> str:
-    """PGC 캐시 폴더(레포 내 pgc_cache/)."""
-    os.makedirs(PGC_CACHE_DIR, exist_ok=True)
-    return PGC_CACHE_DIR
-
-def _extract_vid_from_cache_item(obj):
-    """캐시 JSON 내부 구조가 달라도 최대한 video_id를 뽑아냅니다."""
-    if not isinstance(obj, dict):
-        return None, None, None
-    vid = obj.get("video_id") or obj.get("videoId") or obj.get("id") or obj.get("videoId ")
-    title = obj.get("title") or (obj.get("snippet") or {}).get("title") or ""
-    desc = obj.get("description") or (obj.get("snippet") or {}).get("description") or ""
-    return (vid, title or "", desc or "")
-
-def normalize_text_for_search(text: str) -> str:
-    """[핵심] 띄어쓰기/특수문자 무시하고 검색 (ytan 스타일)"""
-    if not text: return ""
-    return re.sub(r'[^a-zA-Z0-9가-힣]', '', text).lower()
-
-def hashtagify_keyword(keyword: str) -> str:
-    """UGC 검색용: 키워드 앞에 #을 붙여 검색 정확도를 높임."""
-    kw = (keyword or "").strip()
-    if not kw:
-        return ""
-    return kw if kw.startswith("#") else f"#{kw}"
-
-def load_pgc_video_ids_by_keyword(keyword: str, start_dt: datetime = None, end_dt: datetime = None):
-    """
-    로컬 캐시 JSON에서 keyword로 PGC 영상 후보 찾기.
-    [수정] start_dt, end_dt가 있으면 'publishedAt'을 확인하여 기간 필터링 수행.
-    """
-    keyword = (keyword or "").strip()
-    if not keyword:
-        return []
-
-    cache_dir = _cache_local_dir()
-    files = []
-    for fn in os.listdir(cache_dir):
-        if re.fullmatch(r"cache_token_.*\.json", fn):
-            files.append(os.path.join(cache_dir, fn))
-
-    vids = []
-    kw_norm = normalize_text_for_search(keyword)
-
-    for fp in files:
-        try:
-            with open(fp, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception:
-            continue
-
-        candidates = []
-        if isinstance(data, list):
-            candidates = data
-        elif isinstance(data, dict):
-            if isinstance(data.get("videos"), list):
-                candidates = data.get("videos", [])
-            elif isinstance(data.get("items"), list):
-                candidates = data.get("items", [])
-            else:
-                candidates = [data]
-
-        for it in candidates:
-            # 1. 날짜 필터링 (publishedAt 확인) - 여기가 핵심 수정 사항
-            if start_dt or end_dt:
-                pub_str = it.get("date")  # ✅ publishedAt → date
-                if not pub_str:
-                    continue  
-                try:
-                    pub_dt = datetime.fromisoformat(pub_str.replace("Z", "+00:00"))
-
-                    if start_dt and pub_dt < start_dt:
-                        continue
-                    if end_dt and pub_dt > end_dt:
-                        continue
-                except Exception:
-                    continue
-
-            # 2. 키워드 매칭
-            vid, title, desc = _extract_vid_from_cache_item(it)
-            if not vid or not YTB_ID_RE.fullmatch(str(vid)):
-                continue
-            
-            title_norm = normalize_text_for_search(title)
-            desc_norm = normalize_text_for_search(desc)
-            
-            if (kw_norm in title_norm) or (kw_norm in desc_norm):
-                vids.append(str(vid))
-
-    return list(dict.fromkeys(vids))
-# endregion
-
-
 def github_delete_folder(repo, branch, folder_path, token):
     contents_url = f"https://api.github.com/repos/{repo}/contents/{folder_path}?ref={branch}"
     headers = _gh_headers(token)
@@ -1189,13 +1169,11 @@ def _session_base_keyword() -> str:
     schema = st.session_state.get("last_schema", {}) or {}
     kw = (schema.get("keywords") or ["세션"])[0]
     kw = (kw or "").strip()
-    # 한글/영문/숫자만 남기고(공백 제거), 너무 길면 컷
     base = re.sub(r"[^0-9A-Za-z가-힣]", "", kw)
     base = base[:12] if base else "세션"
     return base
 
 def _next_session_number(user_id: str, base: str) -> int:
-    """같은 키워드(base)로 저장된 세션이 있으면 뒤 숫자를 증가."""
     try:
         if not all([GITHUB_TOKEN, GITHUB_REPO]):
             return 1
@@ -1215,7 +1193,6 @@ def _next_session_number(user_id: str, base: str) -> int:
     return max_n + 1 if max_n > 0 else 1
 
 def _build_session_name() -> str:
-    # 이미 불러온 세션이면 같은 이름 유지
     if st.session_state.get("loaded_session_name"):
         return st.session_state.loaded_session_name
 
@@ -1274,7 +1251,6 @@ def load_session_from_github(sess_name: str):
             if not (qa_ok and comments_ok):
                 st.error("세션 핵심 파일을 불러오는 데 실패했습니다.")
                 return
-            # 로그인 상태는 유지한 채로, 대화/분석 상태만 초기화
             _reset_chat_only(keep_auth=True)
 
             with open(os.path.join(local_dir, "qa.json"), "r", encoding="utf-8") as f:
@@ -1291,7 +1267,6 @@ def load_session_from_github(sess_name: str):
         except Exception as e:
             st.error(f"세션 로드 실패: {e}")
 
-# 세션 로드/삭제/이름변경 트리거 처리
 if 'session_to_load' in st.session_state:
     load_session_from_github(st.session_state.pop('session_to_load'))
     st.rerun()
@@ -1327,17 +1302,6 @@ def serialize_comments_for_llm_from_file(csv_path: str,
                                          top_n=1000,
                                          random_n=1000,
                                          dedup_key="text"):
-    """CSV(댓글)에서 LLM 입력용 샘플 텍스트를 생성한다.
-
-    - 추출 기준(기본):
-      1) likeCount 상위 top_n개 + 2) 나머지에서 random_n개 랜덤
-    - LLM 입력 안정화를 위해:
-      - 댓글당 max_chars_per_comment 글자 컷
-      - 전체 max_total_chars 글자 컷(이 선에서 라인 생성 중단)
-
-    Returns:
-      (sample_text, sample_line_count, sample_total_chars, meta_dict)
-    """
     if not os.path.exists(csv_path):
         return "", 0, 0, {"error": "csv_not_found"}
 
@@ -1349,10 +1313,8 @@ def serialize_comments_for_llm_from_file(csv_path: str,
     if df_all.empty:
         return "", 0, 0, {"error": "csv_empty"}
 
-    # 총 수집 댓글 수(=CSV rows)
     total_rows = len(df_all)
 
-    # (선택) 중복 제거 기준(기본: text)
     unique_rows = None
     try:
         if dedup_key in df_all.columns:
@@ -1360,7 +1322,6 @@ def serialize_comments_for_llm_from_file(csv_path: str,
     except Exception:
         unique_rows = None
 
-    # 인기 댓글 + 랜덤 댓글 샘플링
     df_top_likes = df_all.sort_values("likeCount", ascending=False).head(top_n)
     df_remaining = df_all.drop(df_top_likes.index)
 
@@ -1410,27 +1371,16 @@ def serialize_comments_for_llm_from_file(csv_path: str,
 
 
 def tidy_answer(text: str) -> str:
-    """
-    1. 마크다운 코드 블록(```html) 제거
-    2. [핵심] HTML 태그 앞의 들여쓰기(공백)를 강제로 제거하여 코드 블록으로 인식되는 것을 방지
-    3. 불필요한 제목 제거
-    """
     if not text:
         return ""
     
-    # 1. ```html, ``` 제거
     text = re.sub(r"^```html", "", text, flags=re.MULTILINE | re.IGNORECASE)
     text = re.sub(r"^```", "", text, flags=re.MULTILINE)
-    
-    # 2. [신규 기능] HTML 태그로 시작하는 줄의 앞 공백 제거 (들여쓰기 삭제)
-    #    예: "    <div..." -> "<div..."
-    #    이게 없으면 Streamlit이 '코드 블록'으로 오해해서 Raw HTML을 보여줌
     text = re.sub(r"^\s+(?=<)", "", text, flags=re.MULTILINE)
     
     lines = text.splitlines()
     cleaned = []
     
-    # 3. 불필요한 제목 제거
     REMOVE_PATTERN = re.compile(r"유튜브\s*댓글\s*분석|보고서\s*작성|분석\s*결과", re.IGNORECASE)
 
     for line in lines:
@@ -1473,12 +1423,8 @@ def strip_urls(s: str) -> str:
 
 
 # region [API Integrations: Gemini & YouTube]
-# ==============================================================================
-# [Gemini 호출 함수] - 일반 호출 & 스마트 캐싱 호출
-# ==============================================================================
 def call_gemini_rotating(model_name, keys, system_instruction, user_payload,
                          timeout_s=120, max_tokens=8192) -> str:
-    """기존의 일반(Non-Cached) 호출 함수"""
     rk = RotatingKeys(keys, "gem_key_idx")
     if not rk.current():
         raise RuntimeError("Gemini API Key가 비어 있습니다.")
@@ -1533,12 +1479,6 @@ def call_gemini_rotating(model_name, keys, system_instruction, user_payload,
 
 def call_gemini_smart_cache(model_name, keys, system_instruction, user_query, 
                             large_context_text=None, cache_key_in_session="current_cache"):
-    """
-    [스마트 캐싱 로직]
-    1. 캐시가 있으면 -> 불러오기 & 수명연장(TTL Update)
-    2. 캐시가 없거나 만료(404) -> 새로 생성(Resurrection)
-    3. 텍스트가 너무 짧으면 -> 일반 호출로 자동 전환
-    """
     rk = RotatingKeys(keys, "gem_key_idx")
     cached_info = st.session_state.get(cache_key_in_session, None)
     
@@ -1553,16 +1493,13 @@ def call_gemini_smart_cache(model_name, keys, system_instruction, user_query,
         HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
     }
 
-    # [Case A] 기존 캐시 활용 시도 (Keep-Alive)
     if cached_info and not large_context_text:
         cache_name = cached_info.get("name")
         creator_key = cached_info.get("key")
         
-        # 캐시는 만든 키로만 접근 가능
         genai.configure(api_key=creator_key)
         try:
             active_cache = caching.CachedContent.get(cache_name)
-            # 수명 연장 (+20분)
             with GeminiInflightSlot():
                 active_cache.update(ttl=timedelta(minutes=CACHE_TTL_MINUTES))
             
@@ -1570,20 +1507,13 @@ def call_gemini_smart_cache(model_name, keys, system_instruction, user_query,
                 cached_content=active_cache,
                 generation_config={"temperature": 0.2, "max_output_tokens": GEMINI_MAX_TOKENS}
             )
-            # print(f"✅ [Cache] 수명 연장 성공: {cache_name}")
         except Exception as e:
-            # 404(만료), 403(권한) -> 재생성 필요
-            # print(f"⚠️ [Cache] 만료/오류로 재생성 필요: {e}")
             active_cache = None
-            
-            # 재생성을 위한 원본 데이터 복구
             large_context_text = st.session_state.get("sample_text_full_context", "")
             if not large_context_text:
                 return "⚠️ [오류] 세션이 만료되어 복구할 데이터가 없습니다. 새로고침 해주세요."
 
-    # [Case B] 신규 생성 또는 재생성 (Resurrection)
     if not active_cache and large_context_text:
-        # 세션에 원본 백업 (재생성용)
         st.session_state["sample_text_full_context"] = large_context_text
 
         for _ in range(len(rk.keys)):
@@ -1608,13 +1538,10 @@ def call_gemini_smart_cache(model_name, keys, system_instruction, user_query,
                     cached_content=active_cache,
                     generation_config={"temperature": 0.2, "max_output_tokens": GEMINI_MAX_TOKENS}
                 )
-                # print(f"🆕 [Cache] 생성 완료: {active_cache.name}")
                 break
             except Exception as e:
                 msg = str(e).lower()
-                # 내용이 너무 짧음 -> 캐싱 포기하고 일반 호출
                 if "too short" in msg or "argument" in msg:
-                    # print("ℹ️ [Cache] 텍스트가 짧아 일반 호출로 전환")
                     active_cache = None
                     break
                 if "429" in msg or "quota" in msg:
@@ -1622,13 +1549,11 @@ def call_gemini_smart_cache(model_name, keys, system_instruction, user_query,
                     continue
                 raise e
 
-    # [Execution]
     try:
         if final_model:
             with GeminiInflightSlot():
                 resp = final_model.generate_content(user_query, safety_settings=safety_settings)
         else:
-            # 캐싱 실패/미사용 시 일반 호출 (Fallback)
             full_payload = f"{system_instruction}\n\n{large_context_text or ''}\n\n{user_query}"
             return call_gemini_rotating(model_name, keys, None, full_payload)
 
@@ -1807,7 +1732,6 @@ def render_metadata_and_downloads():
             with col3:
                 st.download_button("영상목록", video_csv_data, f"videos_{keywords_str}_{now_str}.csv", "text/csv")
 
-            # ✅ LLM에 실제로 들어간 댓글 샘플(그대로) 다운로드
             sample_text = (st.session_state.get("sample_text") or "").strip()
             if sample_text:
                 sample_bytes = sample_text.encode("utf-8-sig")
@@ -1829,9 +1753,7 @@ def render_chat():
         with st.chat_message(msg.get("role", "user")):
             content = msg.get("content", "")
             
-            # AI 답변이고, 내용이 HTML 태그(<div, <style 등)를 포함하는 경우
             if isinstance(content, str) and msg.get("role") == "assistant" and ("<div" in content or "<style" in content):
-                # 스타일 정의 (가독성 확보)
                 report_style = """
                 <style>
                 .yt-report { font-family: "Helvetica Neue", Arial, sans-serif; line-height: 1.6; color: #333; }
@@ -1845,20 +1767,15 @@ def render_chat():
                 .yt-report td { border-bottom: 1px solid #eee; padding: 8px 5px; vertical-align: top; }
                 </style>
                 """
-                
-                # [안전장치] 잘린 태그 방지를 위해 div로 감쌈 (브라우저가 웬만하면 닫아줌)
-                # unsafe_allow_html=True로 렌더링해야 코드가 안 보이고 디자인이 적용됨
                 full_html = f"<div class='yt-report'>{report_style}{content}</div>"
                 st.markdown(full_html, unsafe_allow_html=True)
                 
             else:
-                # 일반 텍스트 대화
                 st.markdown(content)
 # endregion
 
 
 # region [Main Pipeline]
-
 LIGHT_PROMPT = (
     "역할: 유튜브 댓글 반응 분석기의 자연어 해석가.\n"
     "목표: 한국어 입력에서 [기간(KST)]과 [키워드/옵션]만 정확히 추출.\n"
@@ -1877,7 +1794,6 @@ LIGHT_PROMPT = (
 )
 
 def parse_light_block_to_schema(light_text: str) -> dict:
-    """LIGHT_PROMPT 결과(5줄)를 schema로 파싱."""
     raw = (light_text or "").strip()
 
     m_time = re.search(r"기간\(KST\)\s*:\s*([^~]+)~\s*([^\n]+)", raw)
@@ -1933,16 +1849,20 @@ def run_pipeline_first_turn(user_query: str, extra_video_ids=None, only_these_vi
     own_mode = bool(st.session_state.get("own_ip_mode", False))
     pgc_ids = []
     
-    # [수정] 자사 IP 모드 처리
+    # [수정] 자사 IP 모드 - 파이어베이스 연동 로직 적용
     if own_mode:
-        cache_dir = _cache_local_dir()
-        cache_files = [fn for fn in os.listdir(cache_dir) if re.fullmatch(r"cache_token_.*\.json", fn)]
-        if not cache_files:
-            return f"자사모드 캐시 파일을 찾지 못했습니다: {os.path.join(cache_dir, 'cache_token_*.json')}"
+        # 1. 최신 데이터 동기화 및 로드 (메모리)
+        all_pgc_data = get_all_pgc_data()
         
-        for base_kw in (kw_main or []):
-            # [핵심] 키워드와 함께 start_dt, end_dt를 넘겨 기간 필터링 적용
-            pgc_ids.extend(load_pgc_video_ids_by_keyword(base_kw, start_dt, end_dt))
+        if not all_pgc_data:
+            # st.warning("자사 IP 데이터를 불러올 수 없습니다 (Firebase 연동 확인 필요)")
+            pass
+        else:
+            # 2. 메모리 상에서 필터링
+            for base_kw in (kw_main or []):
+                matched_ids = filter_pgc_data_by_keyword(all_pgc_data, base_kw, start_dt, end_dt)
+                pgc_ids.extend(matched_ids)
+            
         pgc_ids = list(dict.fromkeys(pgc_ids))
 
     if only_these_videos and extra_video_ids:
@@ -1951,7 +1871,8 @@ def run_pipeline_first_turn(user_query: str, extra_video_ids=None, only_these_vi
         all_ids = []
         # UGC 검색
         for base_kw in (kw_main or ["유튜브"]):
-            search_kw = hashtagify_keyword(base_kw)
+            from urllib.parse import quote
+            search_kw = base_kw if base_kw.startswith("#") else f"#{base_kw}"
             if search_kw:
                 all_ids.extend(yt_search_videos(rt, search_kw, 60, "viewCount", kst_to_rfc3339_utc(start_dt), kst_to_rfc3339_utc(end_dt)))
         
@@ -2014,7 +1935,6 @@ def run_pipeline_first_turn(user_query: str, extra_video_ids=None, only_these_vi
         f"ANALYSIS_COMMENT_COUNT_LINE={analysis_scope_line}\n"
     )
 
-    # [핵심] 스마트 캐싱을 위한 Context 구성 (대용량 데이터)
     large_context_text = (
         f"{metrics_block}\n"
         f"[키워드]: {', '.join(kw_main)}\n"
@@ -2023,11 +1943,9 @@ def run_pipeline_first_turn(user_query: str, extra_video_ids=None, only_these_vi
     )
     user_query_part = f"[사용자 원본 질문]: {user_query}"
 
-    # 캐시 초기화 (새 질문이므로)
     if "current_cache" in st.session_state:
         del st.session_state["current_cache"]
 
-    # [수정] call_gemini_smart_cache 사용 (기존 기능 유지)
     answer_md_raw = call_gemini_smart_cache(
         GEMINI_MODEL, GEMINI_API_KEYS, sys, user_query_part,
         large_context_text=large_context_text,
@@ -2042,7 +1960,6 @@ def run_pipeline_first_turn(user_query: str, extra_video_ids=None, only_these_vi
     return tidy_answer(answer_md_raw)
 
 
-# [복구] Smart Cache를 활용하는 run_followup_turn
 def run_followup_turn(user_query: str):
     if not (schema := st.session_state.get("last_schema")):
         return "오류: 이전 분석 기록이 없습니다. 새 채팅을 시작해주세요."
@@ -2070,7 +1987,6 @@ def run_followup_turn(user_query: str):
     )
 
     with st.spinner("💬 답변 생성 중... "):
-        # call_gemini_smart_cache 호출 (large_context_text=None -> 기존 캐시 사용)
         response_raw = call_gemini_smart_cache(GEMINI_MODEL, GEMINI_API_KEYS, "", user_payload, large_context_text=None)
         response = tidy_answer(response_raw)
 
@@ -2084,12 +2000,10 @@ require_auth()
 with st.sidebar:
     st.markdown('<div style="height: 20px;"></div>', unsafe_allow_html=True)
 
-    # --- Auth info ---
     if st.session_state.get("auth_user_id"):
         disp = st.session_state.get("auth_display_name", st.session_state.get("auth_user_id"))
         role = st.session_state.get("auth_role", "user")
         
-        # User & Logout Row
         c_user, c_logout = st.columns([0.75, 0.25], gap="small")
         with c_user:
             st.markdown(f"""
@@ -2100,8 +2014,6 @@ with st.sidebar:
             """, unsafe_allow_html=True)
             
         with c_logout:
-            # [수정] 로그아웃을 버튼 박스 대신 '텍스트 링크'로 변경
-            # 클릭 시 ?logout=true 로 이동 -> require_auth()에서 감지하여 로그아웃 처리
             st.markdown(
                 """
                 <a href="?logout=true" target="_self" 
@@ -2115,20 +2027,16 @@ with st.sidebar:
             
         st.markdown('<div style="border-bottom:1px solid #efefef; margin-bottom:12px; margin-top:2px;"></div>', unsafe_allow_html=True)
 
-    # --- Main Actions ---
-    # 1. New Chat (Dark Button) - [수정] type="primary"로 지정하여 CSS 적용
     if st.button("＋ 새 분석 시작", type="primary", use_container_width=True):
         _reset_chat_only(keep_auth=True)
         st.rerun()
     
     st.markdown('<div style="margin-bottom: 6px;"></div>', unsafe_allow_html=True)
     
-    # 2. Save Actions (Flat Gray Buttons)
     if st.session_state.chat:
         c1, c2 = st.columns(2, gap="small") 
         with c1:
             has_data = bool(st.session_state.last_csv)
-            # 기본값(secondary)이므로 Light Gray 적용됨
             if st.button("세션 저장", use_container_width=True, disabled=not has_data):
                 if has_data:
                     with st.spinner("저장..."):
@@ -2142,10 +2050,8 @@ with st.sidebar:
         
         with c2:
             pdf_title = _session_title_for_pdf()
-            # PDF 버튼 (Region 2에서 스타일 일치시킴)
             render_pdf_capture_button("PDF 저장", pdf_title)
 
-    # --- Session History ---
     st.markdown('<div class="session-list-container">', unsafe_allow_html=True)
     st.markdown('<div class="session-header">Recent History</div>', unsafe_allow_html=True)
 
@@ -2194,7 +2100,6 @@ with st.sidebar:
         except Exception: 
             st.error("Error")
             
-    # Footer
     st.markdown("""
         <div style="margin-top:auto; padding-top:1rem; font-size:0.9rem; color:#6b7280; text-align:center;">
             Media) Marketing Team - Data Part<br>Powered by Gemini
@@ -2202,7 +2107,6 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
 
-# [UI 분기 - Main Content]
 if not st.session_state.chat:
     st.markdown(
         """
@@ -2245,13 +2149,15 @@ if not st.session_state.chat:
         )
         cur_toggle = bool(st.session_state.get("own_ip_mode", False))
         prev_toggle = st.session_state.get("own_ip_toggle_prev", None)
+        
+        # [수정] 자사 IP 모드 토글 시 상태 확인
         if cur_toggle and (prev_toggle is None or prev_toggle is False):
-            cache_dir = _cache_local_dir()
-            cache_files = [fn for fn in os.listdir(cache_dir) if re.fullmatch(r"cache_token_.*\.json", fn)]
-            if cache_files:
-                st.success(f"PGC 캐시 확인됨 ({len(cache_files)}개)")
-            else:
-                st.error("캐시 파일 없음")
+            with st.spinner("파이어베이스 데이터 동기화 중..."):
+                all_data = get_all_pgc_data()
+                if all_data:
+                    st.success(f"데이터 동기화 완료 ({len(all_data):,}개 영상)")
+                else:
+                    st.warning("데이터가 없거나 로드에 실패했습니다.")
         st.session_state["own_ip_toggle_prev"] = cur_toggle
 
 else:
@@ -2284,4 +2190,3 @@ if st.session_state.chat and st.session_state.chat[-1]["role"] == "user":
     st.session_state.chat.append({"role": "assistant", "content": response})
     st.rerun()
 # endregion
-
