@@ -123,7 +123,7 @@ GLOBAL_CSS = r"""
   /* ===== Sidebar header (v3 느낌 유지 + 1줄 고정) ===== */
   .ytcc-sb-title{
     font-weight: 800;
-    font-size: clamp(1.10rem, 1.75vw, 1.55rem);
+    font-size: clamp(1.10rem, 1.65vw, 1.40rem);
     line-height: 1.05;
     margin: 0 0 8px 0;
     background: -webkit-linear-gradient(45deg, #4285F4, #9B72CB, #D96570, #F2A60C);
@@ -132,7 +132,7 @@ GLOBAL_CSS = r"""
     white-space: nowrap;
     overflow: visible;
     text-overflow: clip;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.03em;
     word-break: keep-all;
   }
   .ytcc-sb-title span{ font-weight: 800; }
@@ -167,64 +167,66 @@ GLOBAL_CSS = r"""
     line-height:1.1;
     white-space: nowrap;
   }
-  .ytcc-sb-logout:hover{ color:#374151; }
+  
+  /* 로그아웃 버튼을 링크처럼 */
+.ytcc-logout-btn .stButton button{
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  min-height: unset !important;
+  height: auto !important;
+  color: #6b7280 !important;
+  text-decoration: underline !important;
+  font-size: 0.78rem !important;
+  font-weight: 600 !important;
+  box-shadow: none !important;
+}
+.ytcc-logout-btn .stButton button:hover{
+  color:#374151 !important;
+}
 
-  /* ===== Sidebar action buttons (Streamlit 위젯을 v3처럼) ===== */
-  .new-chat-btn .stButton button,
-  .save-chat-btn .stButton button,
-  .pdf-chat-btn .ytcc-cap-btn,
-  .pdf-chat-btn [data-testid="stDownloadButton"] button{
-    width:100% !important;
-    border-radius: 14px !important;
-    padding: 0.42rem 0.60rem !important;
-    font-size: 0.82rem !important;
-    font-weight: 760 !important;
-    line-height: 1.05 !important;
-    min-height: 2.15rem !important;
-    border: 1px solid #e5e7eb !important;
-    background: #ffffff !important;
-    color:#111827 !important;
-    box-shadow: none !important;
-  }
-  .new-chat-btn .stButton button{
-    background:#e8f0fe !important;
-    border-color:#d2e3fc !important;
-    color:#0052CC !important;
-  }
-  .new-chat-btn .stButton button:hover{
-    background:#d2e3fc !important;
-    border-color:#c2d8f8 !important;
-    color:#0041A3 !important;
-  }
+/* ===== Sidebar action buttons (새채팅/세션저장/PDF저장 스타일 통일) ===== */
+.new-chat-btn .stButton button,
+.save-chat-btn .stButton button{
+  width:100% !important;
+  border-radius: 14px !important;
+  padding: 0.42rem 0.60rem !important;
+  font-size: 0.82rem !important;
+  font-weight: 760 !important;
+  line-height: 1.05 !important;
+  min-height: 2.15rem !important;
+  box-shadow: none !important;
+  box-sizing: border-box !important;
+}
 
-  .save-chat-btn .stButton button{
-    background:#eafaf1 !important;
-    border-color:#cdeedb !important;
-    color:#127a3a !important;
-  }
+/* 새채팅(색상만 다름) */
+.new-chat-btn .stButton button{
+  border: 1px solid #d2e3fc !important;
+  background:#e8f0fe !important;
+  color:#0052CC !important;
+}
+.new-chat-btn .stButton button:hover{
+  background:#d2e3fc !important;
+  border-color:#c2d8f8 !important;
+  color:#0041A3 !important;
+}
 
-  .pdf-chat-btn .ytcc-cap-btn{
-    background:#eafaf1 !important;
-    border-color:#cdeedb !important;
-    color:#127a3a !important;
-  }
-  .pdf-chat-btn .ytcc-cap-btn:hover{
-    background:#d6f3e4 !important;
-    border-color:#bfe8d3 !important;
-    color:#0f6a32 !important;
-  }
+/* 세션저장(PDF저장과 동일 그린 톤) */
+.save-chat-btn .stButton button{
+  border: 1px solid #cdeedb !important;
+  background:#eafaf1 !important;
+  color:#127a3a !important;
+}
+.save-chat-btn .stButton button:hover{
+  background:#d6f3e4 !important;
+  border-color:#bfe8d3 !important;
+  color:#0f6a32 !important;
+}
+.save-chat-btn .stButton button:disabled{
+  opacity: 0.70 !important;
+}
 
-  .save-chat-btn .stButton button:hover{
-    background:#d6f3e4 !important;
-    border-color:#bfe8d3 !important;
-    color:#0f6a32 !important;
-  }
-
-  .pdf-chat-btn [data-testid="stDownloadButton"] button:hover,
-  .pdf-chat-btn .ytcc-cap-btn:hover{
-    background:#f9fafb !important;
-    border-color:#d1d5db !important;
-  }
 
   /* ===== Session list (대화 기록) : v3 카드형 ===== */
   .session-list{ margin-top: 6px !important; }
@@ -598,7 +600,7 @@ def render_pdf_capture_button(label: str, pdf_filename_base: str) -> None:
     (function(){{
       const BTN_ID = "{btn_id}";
       const FILE_BASE = "{safe}";
-      const btn = window.parent.document.getElementById(BTN_ID);
+      const btn = document.getElementById(BTN_ID);
       if(!btn) return;
 
       // ---- load libs once ----
@@ -2172,15 +2174,19 @@ with st.sidebar:
         disp = st.session_state.get("auth_display_name", st.session_state.get("auth_user_id"))
         role = st.session_state.get("auth_role", "user")
 
+    # ✅ user row: same look, but logout as Streamlit button (no new window)
+    u1, u2 = st.columns([0.78, 0.22], gap="small")
+    with u1:
         st.markdown(
-            f"""
-<div class="ytcc-sb-userrow">
-  <div class="ytcc-sb-user">👤 {disp} <span class="ytcc-sb-role">({role})</span></div>
-  <div><a class="ytcc-sb-logout" href="?logout=1">로그아웃</a></div>
-</div>
-""",
+            f'<div class="ytcc-sb-user">👤 {disp} <span class="ytcc-sb-role">({role})</span></div>',
             unsafe_allow_html=True,
         )
+    with u2:
+        st.markdown('<div class="ytcc-logout-btn">', unsafe_allow_html=True)
+        if st.button("로그아웃", key="logout_btn", use_container_width=True):
+            _logout_and_clear()
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("""<style>[data-testid="stSidebarUserContent"] {display: flex; flex-direction: column; height: calc(100vh - 4rem);} .sidebar-top-section { flex-grow: 1; overflow-y: auto; } .sidebar-bottom-section { flex-shrink: 0; }</style>""", unsafe_allow_html=True)
 
