@@ -2195,8 +2195,8 @@ with st.sidebar:
             
     # Footer
     st.markdown("""
-        <div style="margin-top:auto; padding-top:1rem; font-size:0.7rem; color:#d1d5db; text-align:center;">
-            Digital Marketing Data Part<br>Powered by Gemini
+        <div style="margin-top:auto; padding-top:1rem; font-size:0.9rem; color:#6b7280; text-align:center;">
+            Media) Marketing Team - Data Part<br>Powered by Gemini
         </div>
     """, unsafe_allow_html=True)
 
