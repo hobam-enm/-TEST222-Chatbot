@@ -16,5 +16,6 @@ google-auth-httplib2
 plotly
 kaleido
 requests
-reportlab
-firebase-admin    
+reportlab   
+pymongo
+dnspython
