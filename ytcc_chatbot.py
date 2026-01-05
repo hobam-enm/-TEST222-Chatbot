@@ -3,7 +3,6 @@ import streamlit as st
 from io import BytesIO
 from functools import lru_cache
 
-# PDF export (lazy import inside functions)
 import pandas as pd
 import os
 import re
@@ -24,10 +23,9 @@ import google.generativeai as genai
 from google.generativeai import caching  # [추가] 캐싱 모듈
 from streamlit.components.v1 import html as st_html
 
-# [추가] 파이어베이스 연동
-import firebase_admin
-from firebase_admin import credentials
-from firebase_admin import firestore
+import pymongo
+from pymongo import MongoClient
+import certifi
 
 # 경로 및 GitHub 설정
 BASE_DIR = "/tmp"
@@ -333,97 +331,91 @@ ensure_state()
 # endregion
 
 
-# region [Firebase Integration: Sync & Load]
+# region [MongoDB Integration: Sync & Load]
 # ==========================================
-# ytan과 동일하게 Firebase에서 데이터를 읽어옵니다.
-# 단, 여기는 '읽기 전용'이며, 업데이트 감지 로직이 추가됩니다.
+# ytan(생산자)이 몽고DB에 저장한 데이터를 읽어옵니다.
 # ==========================================
 
-def init_firebase():
-    """파이어베이스 앱 초기화 (싱글톤)"""
+@st.cache_resource
+def init_mongo():
+    """몽고DB 클라이언트 연결 (싱글톤)"""
     try:
-        if not firebase_admin._apps:
-            if "firebase" not in st.secrets:
-                return None
-            cred_dict = dict(st.secrets["firebase"])
-            cred = credentials.Certificate(cred_dict)
-            firebase_admin.initialize_app(cred)
-        return firestore.client()
+        if "mongo" not in st.secrets: return None
+        uri = st.secrets["mongo"]["uri"]
+        # certifi: SSL 인증서 오류 방지용
+        return MongoClient(uri, tlsCAFile=certifi.where())
     except Exception as e:
-        print(f"Firebase Init Error: {e}")
+        print(f"MongoDB Init Error: {e}")
         return None
 
-@st.cache_data(ttl=90000, show_spinner=False)
-def load_from_firebase(file_name):
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_from_mongodb(file_name):
     """
-    ytan이 저장한 청크(Chunk) 데이터를 읽어서 하나로 합칩니다.
-    캐시 유효기간: 25시간 (ytan과 동일)
+    특정 소스 파일(file_name)에 해당하는 모든 영상을 몽고DB에서 가져옵니다.
     """
     try:
-        db = init_firebase()
-        if not db: return []
-
-        doc_ref = db.collection('yt_cache').document(file_name)
-        main_doc = doc_ref.get()
-        if not main_doc.exists:
-            return []
-
-        chunks_stream = doc_ref.collection('chunks').stream()
-        sorted_chunks = sorted(chunks_stream, key=lambda x: int(x.id) if x.id.isdigit() else x.id)
+        client = init_mongo()
+        if not client: return []
         
-        all_videos = []
-        for chunk_doc in sorted_chunks:
-            chunk_data = chunk_doc.to_dict().get('data', [])
-            all_videos.extend(chunk_data)
-            
-        return all_videos
+        db = client.get_database("yt_dashboard")
+        col = db.get_collection("videos")
+        
+        # source_file이 일치하는 문서 검색 (_id 필드는 제외하고 가져옴)
+        cursor = col.find({"source_file": file_name}, {"_id": 0, "source_file": 0})
+        return list(cursor)
 
     except Exception as e:
         print(f"Load Error: {e}")
         return []
 
-# 1. 서버 전체가 공유하는 '타임스탬프 저장소' 만들기
+# 전역 타임스탬프 추적기 (새로고침 해도 유지)
 @st.cache_resource
 def get_global_time_tracker():
     return {}
 
 def get_all_pgc_data():
-    db = init_firebase()
-    if not db: return []
+    """
+    몽고DB에 있는 '모든' 수집 데이터를 가져옵니다. (자사 IP 모드용)
+    metadata 컬렉션을 확인하여 변경사항이 있을 때만 캐시를 갱신합니다.
+    """
+    client = init_mongo()
+    if not client: return []
 
     all_pgc_videos = []
     
     try:
-        docs = db.collection('yt_cache').stream()
+        db = client.get_database("yt_dashboard")
+        meta_col = db.get_collection("metadata")
         
-        # [변경] session_state 대신 전역 저장소(tracker) 사용
-        # 이제 로그인을 다시 해도 이 기록은 안 지워집니다!
+        # 1. 메타데이터(업데이트 시간) 전체 조회
+        #    문서 구조: {"_id": "cache_token_xxx.json", "updated_at": ..., "count": ...}
+        docs = meta_col.find({})
+        
         tracker = get_global_time_tracker()
-            
         need_refresh = False
-        doc_list = []
+        file_list = []
 
         for doc in docs:
-            d_data = doc.to_dict()
-            updated_at = d_data.get('updated_at')
-            doc_id = doc.id
+            file_name = doc["_id"]
+            updated_at = doc.get("updated_at")
             
-            doc_list.append(doc_id)
+            file_list.append(file_name)
             
+            # 타임스탬프 비교
             current_ts_str = str(updated_at) if updated_at else "none"
-            # 전역 저장소에서 확인
-            last_ts_str = tracker.get(doc_id)
+            last_ts_str = tracker.get(file_name)
             
             if last_ts_str != current_ts_str:
                 need_refresh = True
-                tracker[doc_id] = current_ts_str # 전역 저장소 업데이트
+                tracker[file_name] = current_ts_str
         
+        # 2. 변경사항 있으면 캐시 비우기
         if need_refresh:
-            load_from_firebase.clear()
-            # print("🔄 [Sync] 업데이트 감지 -> 캐시 갱신")
-
-        for doc_id in doc_list:
-            vids = load_from_firebase(doc_id)
+            load_from_mongodb.clear()
+        
+        # 3. 데이터 로드 (캐시 활용)
+        for f_name in file_list:
+            vids = load_from_mongodb(f_name)
             all_pgc_videos.extend(vids)
 
     except Exception as e:
@@ -433,10 +425,11 @@ def get_all_pgc_data():
     return all_pgc_videos
 
 def _extract_vid_from_item(obj):
+    # 몽고DB 문서는 'id', 'title', 'date' 등의 필드를 가짐
     vid = obj.get("id") or obj.get("videoId")
     title = obj.get("title", "")
     desc = obj.get("description", "")
-    pub_at = obj.get("date") or obj.get("publishedAt") # ytan saves as 'date'
+    pub_at = obj.get("date") or obj.get("publishedAt") 
     return vid, title, desc, pub_at
 
 def normalize_text_for_search(text: str) -> str:
@@ -444,7 +437,6 @@ def normalize_text_for_search(text: str) -> str:
     return re.sub(r'[^a-zA-Z0-9가-힣]', '', text).lower()
 
 def filter_pgc_data_by_keyword(all_data, keyword, start_dt=None, end_dt=None):
-    """메모리에 로드된 전체 데이터에서 검색"""
     if not keyword or not all_data: return []
     
     kw_norm = normalize_text_for_search(keyword)
@@ -457,9 +449,17 @@ def filter_pgc_data_by_keyword(all_data, keyword, start_dt=None, end_dt=None):
         # 날짜 필터
         if (start_dt or end_dt) and pub_str:
             try:
-                # ytan saves as ISO string (often UTC or KST depends on parser)
-                # safe parsing
-                pub_dt = datetime.fromisoformat(pub_str.replace("Z", "+00:00"))
+                # 몽고DB date 필드가 이미 datetime 객체일 수도 있고 문자열일 수도 있음
+                if isinstance(pub_str, datetime):
+                    pub_dt = pub_str
+                else:
+                    pub_dt = datetime.fromisoformat(str(pub_str).replace("Z", "+00:00"))
+                
+                # 타임존 보정 (KST 기준 비교를 위해 naive로 변환하거나 tz 맞춤)
+                if pub_dt.tzinfo:
+                    pub_dt = pub_dt.astimezone(timezone(timedelta(hours=9)))
+                
+                # 비교 (start_dt, end_dt는 이미 KST aware라고 가정)
                 if start_dt and pub_dt < start_dt: continue
                 if end_dt and pub_dt > end_dt: continue
             except: pass
