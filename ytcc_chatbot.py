@@ -1883,7 +1883,7 @@ def run_pipeline_first_turn(user_query: str, extra_video_ids=None, only_these_vi
             clean_kw = base_kw.replace(" ", "")
             search_kw = clean_kw if clean_kw.startswith("#") else f"#{clean_kw}"
             if search_kw:
-                all_ids.extend(yt_search_videos(rt, search_kw, 60, "viewCount", kst_to_rfc3339_utc(start_dt), kst_to_rfc3339_utc(end_dt)))
+                all_ids.extend(yt_search_videos(rt, search_kw, 100, "viewCount", kst_to_rfc3339_utc(start_dt), kst_to_rfc3339_utc(end_dt)))
         
         if extra_video_ids:
             all_ids.extend(extra_video_ids)
@@ -2123,8 +2123,8 @@ if not st.session_state.chat:
             text-align:center; padding-top:8vh;">
   <div class="ytcc-main-title">유튜브 댓글분석 AI</div>
   <p style="font-size:1.1rem; color:#6b7280; max-width:600px; margin-top:10px; margin-bottom: 2rem;">
-    영상 URL만 넣으면, <b>Gemini</b>가 수천 개의 댓글을 읽고<br>
-    여론, 주요 키워드, 시청자 반응을 즉시 분석해드립니다.
+    유튜브 여론이 궁금한 드라마에 대해 대화형식으로 물어보세요<br>
+    유튜브 댓글 기반의 시청자 반응을 AI가 분석해줍니다.
   </p>
   
   <div style="background-color:#fff1f2; border:1px solid #ffe4e6; border-radius:12px; 
@@ -2142,8 +2142,10 @@ if not st.session_state.chat:
     <h4 style="margin-bottom:1rem; font-size:1rem; font-weight:700; color:#374151;">💡 이렇게 질문해보세요</h4>
     <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <span style="background:#f3f4f6; padding:6px 12px; border-radius:20px; font-size:0.85rem; color:#4b5563;">최근 24시간 태풍상사 반응 요약해줘</span>
-        <span style="background:#f3f4f6; padding:6px 12px; border-radius:20px; font-size:0.85rem; color:#4b5563;">이 영상에서 긍정 반응만 뽑아줘</span>
         <span style="background:#f3f4f6; padding:6px 12px; border-radius:20px; font-size:0.85rem; color:#4b5563;">https://youtu.be/xxxx 분석해줘</span>
+        <span style="background:#f3f4f6; padding:6px 12px; border-radius:20px; font-size:0.85rem; color:#4b5563;">12월 한달간 프로보노 반응 분석해줘</span>
+        <span style="background:#f3f4f6; padding:6px 12px; border-radius:20px; font-size:0.85rem; color:#4b5563;">(후속대화)"정경호"연기력에 대한 반응은 어때?</span>
+        
     </div>
   </div>
 </div>
