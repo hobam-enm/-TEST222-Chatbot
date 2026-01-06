@@ -1885,7 +1885,8 @@ def run_pipeline_first_turn(user_query: str, extra_video_ids=None, only_these_vi
         # UGC 검색
         for base_kw in (kw_main or ["유튜브"]):
             from urllib.parse import quote
-            search_kw = base_kw if base_kw.startswith("#") else f"#{base_kw}"
+            clean_kw = base_kw.replace(" ", "")
+            search_kw = clean_kw if clean_kw.startswith("#") else f"#{clean_kw}"
             if search_kw:
                 all_ids.extend(yt_search_videos(rt, search_kw, 60, "viewCount", kst_to_rfc3339_utc(start_dt), kst_to_rfc3339_utc(end_dt)))
         
