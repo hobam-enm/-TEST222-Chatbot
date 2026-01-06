@@ -2165,7 +2165,7 @@ if not st.session_state.chat:
         
         # [수정] 자사 IP 모드 토글 시 상태 확인
         if cur_toggle and (prev_toggle is None or prev_toggle is False):
-            with st.spinner("파이어베이스 데이터 동기화 중..."):
+            with st.spinner("데이터 동기화 중..."):
                 all_data = get_all_pgc_data()
                 if all_data:
                     st.success(f"데이터 동기화 완료 ({len(all_data):,}개 영상)")
