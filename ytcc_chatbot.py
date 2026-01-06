@@ -20,7 +20,7 @@ import threading
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import google.generativeai as genai
-from google.generativeai import caching  # [추가] 캐싱 모듈
+from google.generativeai import caching  
 from streamlit.components.v1 import html as st_html
 
 import pymongo
@@ -36,12 +36,10 @@ GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
 GITHUB_REPO = st.secrets.get("GITHUB_REPO", "")
 GITHUB_BRANCH = st.secrets.get("GITHUB_BRANCH", "main")
 
-# (추가) 1차 분석 프롬프트 파일 (레포에 함께 커밋해두면 자동 적용)
 FIRST_TURN_PROMPT_FILE = "1차 질문 프롬프트.md"
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def load_first_turn_system_prompt() -> str:
-    """레포의 '1차 질문 프롬프트.md'만 사용한다(폴백 없음)."""
     if not os.path.exists(FIRST_TURN_PROMPT_FILE):
         raise RuntimeError(f"프롬프트 파일이 없습니다: {FIRST_TURN_PROMPT_FILE}")
     with open(FIRST_TURN_PROMPT_FILE, "r", encoding="utf-8") as f:
@@ -260,7 +258,7 @@ MAX_TOTAL_COMMENTS   = 120_000
 MAX_COMMENTS_PER_VID = 4_000
 CACHE_TTL_MINUTES    = 20 
 
-# [추가] Gemini 동시 호출(In-flight) 제한
+# Gemini 동시 호출 제한
 MAX_GEMINI_INFLIGHT = max(1, int(st.secrets.get("MAX_GEMINI_INFLIGHT", 3) or 3))
 GEMINI_INFLIGHT_WAIT_SEC = int(st.secrets.get("GEMINI_INFLIGHT_WAIT_SEC", 120) or 120)
 
@@ -333,12 +331,12 @@ ensure_state()
 
 # region [MongoDB Integration: Sync & Load]
 # ==========================================
-# ytan(생산자)이 몽고DB에 저장한 데이터를 읽어옵니다.
+# 몽고DB에 저장한 데이터를 읽어옵니다.
 # ==========================================
 
 @st.cache_resource
 def init_mongo():
-    """몽고DB 클라이언트 연결 (싱글톤)"""
+    """몽고DB 클라이언트 연결"""
     try:
         if "mongo" not in st.secrets: return None
         uri = st.secrets["mongo"]["uri"]
@@ -350,9 +348,6 @@ def init_mongo():
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_from_mongodb(file_name):
-    """
-    특정 소스 파일(file_name)에 해당하는 모든 영상을 몽고DB에서 가져옵니다.
-    """
     try:
         client = init_mongo()
         if not client: return []
