@@ -1930,7 +1930,6 @@ def run_pipeline_first_turn(user_query: str, extra_video_ids=None, only_these_vi
 
     analysis_scope_line = (
         f"{sample_cnt:,}개 (추출: 인기댓글 {used_top:,}개 + 랜덤 {used_random:,}개, "
-        f"댓글당 {max_per}자 컷, 총 {max_total:,}자 컷)"
     )
     st.session_state["analysis_scope_line"] = analysis_scope_line
 
