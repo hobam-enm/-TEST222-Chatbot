@@ -1982,7 +1982,7 @@ def run_followup_turn(user_query: str):
         "=== 답변 전략 ===\n"
         "1. 질문의 의도(속성/대상)를 먼저 파악해라.\n"
         "2. 네 기억 속에 있는 [댓글 샘플]에서 그와 관련된 구체적인 증거(댓글)를 찾아라.\n"
-        "3. 뭉뚱그려 말하지 말고, `> 댓글 내용` 형식으로 직접 인용하며 근거를 대라.\n"
+        "3. 증거 댓글은 눈에 잘 띄도록 반드시 `<div class='quote'>댓글 내용</div>` 태그로 감싸서 출력해라.\n"
         "4. 질문과 관련 없는 TMI(다른 배우, 다른 이슈 등)는 절대 말하지 마라.\n"
         "5. 만약 관련 내용이 데이터에 없으면 '데이터에서 확인되지 않는다'고 딱 잘라 말해라.\n"
     )
@@ -2144,7 +2144,6 @@ if not st.session_state.chat:
         <span style="background:#f3f4f6; padding:6px 12px; border-radius:20px; font-size:0.85rem; color:#4b5563;">https://youtu.be/xxxx 분석해줘</span>
         <span style="background:#f3f4f6; padding:6px 12px; border-radius:20px; font-size:0.85rem; color:#4b5563;">12월 한달간 프로보노 반응 분석해줘</span>
         <span style="background:#f3f4f6; padding:6px 12px; border-radius:20px; font-size:0.85rem; color:#4b5563;">(후속대화)"정경호"연기력에 대한 반응은 어때?</span>
-        
     </div>
   </div>
 </div>
