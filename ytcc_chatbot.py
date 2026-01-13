@@ -1980,7 +1980,7 @@ def run_followup_turn(user_query: str):
         "첫 질문에 대한 응답처럼 규격화된 HTML로 주지 않아도 된다.\n"
         "이전의 요약 미션은 잊어. 오직 아래 [현재 질문]에만 집중해서 답해.\n\n"
         "=== 답변 전략 ===\n"
-        "1. 질문의 의도(속성/대상)를 먼저 파악해라.\n"
+        "1. 질문의 의도(속성/대상)를 먼저 파악해라.(파악한 의도는 답변을 위한 내부 지침으로만 활용하고, 사용자에게 보여주지 않아도 된다)\n"
         "2. 네 기억 속에 있는 [댓글 샘플]에서 그와 관련된 구체적인 증거(댓글)를 찾아라.\n"
         "3. 증거 댓글은 눈에 잘 띄도록 반드시 `<div class='quote'>댓글 내용</div>` 태그로 감싸서 출력해라.\n"
         "4. 질문과 관련 없는 TMI(다른 배우, 다른 이슈 등)는 절대 말하지 마라.\n"
@@ -2110,7 +2110,7 @@ with st.sidebar:
             
     st.markdown("""
         <div style="margin-top:auto; padding-top:1rem; font-size:0.9rem; color:#6b7280; text-align:center;">
-            Media) Marketing Team - Data Part<br>Powered by Gemini
+            Media) Marketing Team - Data Insight Part<br>Powered by Gemini
         </div>
     """, unsafe_allow_html=True)
 
