@@ -68,7 +68,7 @@ def kst_to_rfc3339_utc(dt_kst: datetime) -> str:
 
 # region [Page Config & CSS]
 st.set_page_config(
-    page_title="(테스트)유튜브 댓글분석: 챗봇",
+    page_title="유튜브 댓글분석: AI챗봇",
     layout="wide",
     initial_sidebar_state="expanded"
 )
