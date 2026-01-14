@@ -1194,44 +1194,96 @@ def _get_persisted_token(qp: dict) -> str:
     return tok
 
 def _logout_and_clear():
-    # 1) 세션 인증정보 제거 (기존 로직 유지)
-    #    + Mongo 세션이면 즉시 revoke
+    """
+    Robust logout for team-tool mode (MongoDB session + localStorage persistence)
+
+    Goals:
+      1) Revoke current MongoDB session immediately (best-effort)
+      2) Delete browser localStorage token so refresh won't auto-login
+      3) Clear Streamlit session auth state
+      4) Navigate to a clean URL (no query params) without blank/white screen
+    """
+    # ---- 0) Identify current token (prefer in-memory, then URL, then localStorage) ----
+    tok = str(st.session_state.get("_auth_token") or "").strip()
+    if not tok:
+        try:
+            qp = _qp_get()
+            v = qp.get("auth") if isinstance(qp, dict) else ""
+            if isinstance(v, list):
+                v = v[0] if v else ""
+            tok = str(v or "").strip()
+        except Exception:
+            tok = ""
+    if not tok:
+        try:
+            tok = str(_ls_get_item(_AUTH_LS_KEY) or "").strip()
+        except Exception:
+            tok = ""
+
+    # ---- 1) Revoke mongo session (opaque token without '.') ----
     try:
-        qp = _qp_get()
-        tok = qp.get("auth") if isinstance(qp, dict) else None
-        if isinstance(tok, list):
-            tok = tok[0] if tok else None
-        tok = str(tok or "").strip()
         if tok and "." not in tok:
             _revoke_mongo_session(tok)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"⚠️ [logout] revoke session failed: {e}")
 
+    # ---- 2) Delete localStorage token (best-effort) ----
+    try:
+        _ls_del_item(_AUTH_LS_KEY)
+    except Exception as e:
+        print(f"⚠️ [logout] localStorage delete failed: {e}")
+
+    # ---- 3) Clear auth-related session_state keys ----
+    for k in [
+        "auth_ok",
+        "auth_user_id",
+        "auth_role",
+        "auth_display_name",
+        "_auth_token",
+    ]:
+        try:
+            st.session_state.pop(k, None)
+        except Exception:
+            pass
+
+    # Keep other session data reset behavior (existing logic)
     _reset_chat_only(keep_auth=False)
 
-    # 2) Streamlit query params도 비우기 (가능하면)
+    # ---- 4) Clear query params (best-effort) ----
     try:
         st.query_params.clear()
     except Exception:
         pass
 
-    # 3) 브라우저 URL 자체를 "파라미터 없는 첫페이지"로 강제 이동
-    #    (auth=... 이 남아 자동로그인되는 문제를 물리적으로 차단)
+    # ---- 5) User-visible logout feedback + hard clean URL navigation ----
+    st.markdown("✅ 로그아웃 처리 중…")
+
+    # JS fallback: remove localStorage + navigate to clean URL (parent if framed)
+    # Using replace() avoids creating history entries.
     st_html(
-        """
+        f"""
         <script>
-          (function () {
-            const w = window.parent || window;
-            const clean = w.location.pathname + (w.location.hash || "");
-            w.location.replace(clean);
-          })();
+          (function () {{
+            try {{
+              var w = window.parent || window;
+              try {{ w.localStorage.removeItem({json.dumps(_AUTH_LS_KEY)}); }} catch(e) {{}}
+              var clean = w.location.pathname + (w.location.hash || "");
+              w.location.replace(clean);
+            }} catch (e) {{
+              // If navigation is blocked for any reason, do nothing; Streamlit rerun will show login screen.
+            }}
+          }})();
         </script>
         """,
         height=0
     )
+
+    # Don't leave a blank white page; stop after rendering the message above.
     st.stop()
 
+
 def require_auth():
+
     users = st.session_state.get("_auth_users_cache") or _load_auth_users_from_secrets()
     st.session_state["_auth_users_cache"] = users
     auth_enabled = bool(users)
