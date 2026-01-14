@@ -1516,6 +1516,85 @@ def github_rename_session(user_id: str, old_name: str, new_name: str, token):
 
     github_delete_folder(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{old_name}", token)
 
+
+# --- MongoDB Saved Sessions (replace GitHub sessions storage) ---
+@st.cache_resource
+def _mongo_saved_sessions_coll():
+    """Collection for saved chat sessions (NOT auth sessions)."""
+    try:
+        client = init_mongo()
+        if not client:
+            return None
+        # Keep consistent with existing Mongo usage in this app
+        db = client.get_database("yt_dashboard")
+        col = db.get_collection("ytcc_saved_sessions")
+        try:
+            col.create_index([("user_id", 1), ("updated_at", -1)])
+            col.create_index([("user_id", 1), ("name", 1)], unique=True)
+        except Exception:
+            pass
+        return col
+    except Exception as e:
+        print(f"Mongo SavedSessions Init Error: {e}")
+        return None
+
+def mongo_list_saved_sessions(user_id: str):
+    col = _mongo_saved_sessions_coll()
+    if not col:
+        return []
+    try:
+        cur = col.find({"user_id": user_id}, {"name": 1}).sort("updated_at", -1)
+        return [d.get("name") for d in cur if d.get("name")]
+    except Exception as e:
+        print(f"mongo_list_saved_sessions error: {e}")
+        return []
+
+def mongo_save_session(user_id: str, sess_name: str, meta_data: dict):
+    col = _mongo_saved_sessions_coll()
+    if not col:
+        raise RuntimeError("MongoDB 연결이 없어 세션을 저장할 수 없습니다.")
+    now = now_kst()
+    # NOTE: intentionally NOT storing comments.csv / videos.csv (size risk)
+    doc_set = {
+        "user_id": user_id,
+        "name": sess_name,
+        "updated_at": now,
+        "qa": meta_data,
+        "has_files": False,
+    }
+    col.update_one(
+        {"user_id": user_id, "name": sess_name},
+        {"$set": doc_set, "$setOnInsert": {"created_at": now}},
+        upsert=True
+    )
+
+def mongo_load_session(user_id: str, sess_name: str):
+    col = _mongo_saved_sessions_coll()
+    if not col:
+        return None
+    return col.find_one({"user_id": user_id, "name": sess_name})
+
+def mongo_delete_session(user_id: str, sess_name: str):
+    col = _mongo_saved_sessions_coll()
+    if not col:
+        return
+    col.delete_one({"user_id": user_id, "name": sess_name})
+
+def mongo_rename_session(user_id: str, old_name: str, new_name: str):
+    col = _mongo_saved_sessions_coll()
+    if not col:
+        raise RuntimeError("MongoDB 연결이 없어 이름 변경을 할 수 없습니다.")
+    if col.find_one({"user_id": user_id, "name": new_name}):
+        raise RuntimeError("같은 이름의 세션이 이미 존재합니다.")
+    now = now_kst()
+    res = col.update_one(
+        {"user_id": user_id, "name": old_name},
+        {"$set": {"name": new_name, "updated_at": now}}
+    )
+    if res.matched_count == 0:
+        raise RuntimeError("변경 대상 세션을 찾지 못했습니다.")
+
+
 def _session_base_keyword() -> str:
     schema = st.session_state.get("last_schema", {}) or {}
     kw = (schema.get("keywords") or ["세션"])[0]
@@ -1524,17 +1603,18 @@ def _session_base_keyword() -> str:
     base = base[:12] if base else "세션"
     return base
 
-def _next_session_number(user_id: str, base: str) -> int:
+
+def _next_session_number(base: str) -> int:
+    """Generate next session number based on existing saved sessions in MongoDB."""
+    user_id = st.session_state.get("auth_user_id") or "public"
     try:
-        if not all([GITHUB_TOKEN, GITHUB_REPO]):
-            return 1
-        sessions = github_list_dir(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}", GITHUB_TOKEN) or []
+        sessions = mongo_list_saved_sessions(user_id)
     except Exception:
         sessions = []
 
     pat = re.compile(rf"^{re.escape(base)}(\d+)$")
     max_n = 0
-    for s in sessions:
+    for s in sessions or []:
         m = pat.match(str(s))
         if m:
             try:
@@ -1553,100 +1633,69 @@ def _build_session_name() -> str:
     return f"{base}{n}"
 
 
+
 def save_current_session_to_github():
-    if not all([GITHUB_REPO, GITHUB_TOKEN, st.session_state.chat, st.session_state.last_csv]):
-        return False, "저장할 데이터가 없거나 GitHub 설정이 누락되었습니다."
+    """Save current session to MongoDB (GitHub storage removed for sessions).
+
+    NOTE: To avoid DB size explosion, we only store qa/meta (chat, schema, sample_text, etc.)
+    and do NOT store comments.csv/videos.csv. Therefore, sessions loaded later will not
+    provide CSV download.
+    """
+    if not st.session_state.get("chat"):
+        return False, "저장할 대화가 없습니다."
 
     sess_name = _build_session_name()
     user_id = st.session_state.get('auth_user_id') or 'public'
-    local_dir = os.path.join(SESS_DIR, user_id, sess_name)
-    os.makedirs(local_dir, exist_ok=True)
 
     try:
-        meta_path = os.path.join(local_dir, "qa.json")
         meta_data = {
-            "chat": st.session_state.chat,
-            "last_schema": st.session_state.last_schema,
-            "sample_text": st.session_state.sample_text
+            "chat": st.session_state.get("chat", []),
+            "last_schema": st.session_state.get("last_schema", None),
+            "sample_text": st.session_state.get("sample_text", ""),
+            "sample_count": st.session_state.get("sample_count", None),
+            "sample_chars": st.session_state.get("sample_chars", None),
+            "sample_meta": st.session_state.get("sample_meta", None),
         }
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump(meta_data, f, ensure_ascii=False, indent=2)
-
-        comments_path = os.path.join(local_dir, "comments.csv")
-        videos_path = os.path.join(local_dir, "videos.csv")
-
-        os.system(f'cp "{st.session_state.last_csv}" "{comments_path}"')
-        if st.session_state.last_df is not None:
-            st.session_state.last_df.to_csv(videos_path, index=False, encoding="utf-8-sig")
-
-        github_upload_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{sess_name}/qa.json", meta_path, GITHUB_TOKEN)
-        github_upload_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{sess_name}/comments.csv", comments_path, GITHUB_TOKEN)
-        if os.path.exists(videos_path):
-            github_upload_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{sess_name}/videos.csv", videos_path, GITHUB_TOKEN)
-
+        mongo_save_session(user_id, sess_name, meta_data)
         st.session_state.loaded_session_name = sess_name
         return True, sess_name
 
     except Exception as e:
         return False, f"저장 실패: {e}"
 
+
 def load_session_from_github(sess_name: str):
+    """Load saved session from MongoDB (GitHub storage removed for sessions).
+
+    IMPORTANT: For size reasons, this load restores chat/meta only.
+    Download features (comments/videos CSV) are intentionally disabled for loaded sessions.
+    """
     with st.spinner(f"세션 '{sess_name}' 불러오는 중..."):
         try:
             user_id = st.session_state.get('auth_user_id') or 'public'
-            local_dir = os.path.join(SESS_DIR, user_id, sess_name)
-            qa_ok = github_download_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{sess_name}/qa.json", GITHUB_TOKEN, os.path.join(local_dir, "qa.json"))
-            comments_ok = github_download_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{sess_name}/comments.csv", GITHUB_TOKEN, os.path.join(local_dir, "comments.csv"))
-            videos_ok = github_download_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{sess_name}/videos.csv", GITHUB_TOKEN, os.path.join(local_dir, "videos.csv"))
-
-            if not (qa_ok and comments_ok):
-                st.error("세션 핵심 파일을 불러오는 데 실패했습니다.")
+            doc = mongo_load_session(user_id, sess_name)
+            if not doc or not doc.get("qa"):
+                st.error("세션을 찾지 못했습니다.")
                 return
+
+            qa = doc.get("qa") or {}
             _reset_chat_only(keep_auth=True)
 
-            with open(os.path.join(local_dir, "qa.json"), "r", encoding="utf-8") as f:
-                meta = json.load(f)
-
             st.session_state.update({
-                "chat": meta.get("chat", []),
-                "last_schema": meta.get("last_schema", None),
-                "last_csv": os.path.join(local_dir, "comments.csv"),
-                "last_df": pd.read_csv(os.path.join(local_dir, "videos.csv")) if videos_ok and os.path.exists(os.path.join(local_dir, "videos.csv")) else pd.DataFrame(),
+                "chat": qa.get("chat", []),
+                "last_schema": qa.get("last_schema", None),
+                # Disable download for loaded sessions (no local CSV paths)
+                "last_csv": None,
+                "last_df": pd.DataFrame(),
                 "loaded_session_name": sess_name,
-                "sample_text": meta.get("sample_text", "")
+                "sample_text": qa.get("sample_text", ""),
+                "sample_count": qa.get("sample_count", None),
+                "sample_chars": qa.get("sample_chars", None),
+                "sample_meta": qa.get("sample_meta", None),
             })
         except Exception as e:
             st.error(f"세션 로드 실패: {e}")
 
-if 'session_to_load' in st.session_state:
-    load_session_from_github(st.session_state.pop('session_to_load'))
-    st.rerun()
-
-if 'session_to_delete' in st.session_state:
-    sess_name = st.session_state.pop('session_to_delete')
-    with st.spinner(f"세션 '{sess_name}' 삭제 중..."):
-        user_id = st.session_state.get("auth_user_id") or "public"
-        github_delete_folder(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{sess_name}", GITHUB_TOKEN)
-    st.success("세션 삭제 완료.")
-    time.sleep(1)
-    st.rerun()
-
-if 'session_to_rename' in st.session_state:
-    old, new = st.session_state.pop('session_to_rename')
-    if old and new and old != new:
-        with st.spinner("이름 변경 중..."):
-            try:
-                user_id = st.session_state.get("auth_user_id") or "public"
-                github_rename_session(user_id, old, new, GITHUB_TOKEN)
-                st.success("이름 변경 완료!")
-            except Exception as e:
-                st.error(f"변경 실패: {e}")
-        time.sleep(1)
-        st.rerun()
-# endregion
-
-
-# region [Data Processing & Utils]
 def serialize_comments_for_llm_from_file(csv_path: str,
                                          max_chars_per_comment=280,
                                          max_total_chars=420_000,
@@ -2411,7 +2460,7 @@ with st.sidebar:
     else:
         try:
             user_id = st.session_state.get("auth_user_id") or "public"
-            sessions = sorted(github_list_dir(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}", GITHUB_TOKEN), reverse=True)
+            sessions = mongo_list_saved_sessions(user_id)
             
             if not sessions: 
                 st.caption("기록 없음")
