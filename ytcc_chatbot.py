@@ -885,8 +885,13 @@ def _qp_set(**kwargs):
         
         for k, v in cleaned.items():
             st.query_params[k] = v
-    except Exception:
-        pass
+    except Exception as e:
+        # NOTE: query_params set may fail depending on Streamlit runtime/browser context.
+        # Keep the app running, but leave a breadcrumb in logs for debugging.
+        try:
+            print(f"⚠️ [_qp_set] failed: {e}")
+        except Exception:
+            pass
 
 def _b64url_encode(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).decode("utf-8").rstrip("=")
@@ -924,11 +929,67 @@ def _verify_auth_token(token: str) -> Optional[dict]:
     except Exception:
         return None
 
+@st.cache_resource
+def _auth_session_store() -> dict:
+    # In-memory auth session map: {key: {"uid": str, "exp": int}}
+    # NOTE: This lives per Streamlit server instance (good enough for our use-case).
+    return {}
+
+def _make_auth_session_key(user_id: str, ttl_hours: int = None) -> str:
+    ttl = ttl_hours if ttl_hours is not None else int(st.secrets.get("AUTH_SESSION_TTL_HOURS", st.secrets.get("AUTH_TOKEN_TTL_HOURS", 24*14)) or (24*14))
+    exp = int(time.time() + max(60, ttl * 3600))
+    key = uuid4().hex  # opaque short credential for URL
+    store = _auth_session_store()
+    store[key] = {"uid": user_id, "exp": exp}
+    return key
+
+def _verify_auth_session_key(key: str) -> Optional[dict]:
+    try:
+        if not key:
+            return None
+        store = _auth_session_store()
+        rec = store.get(str(key))
+        if not rec:
+            return None
+        if int(rec.get("exp", 0)) < int(time.time()):
+            store.pop(str(key), None)
+            return None
+        uid = (rec.get("uid") or "").strip()
+        if not uid:
+            return None
+        return {"uid": uid, "exp": int(rec.get("exp", 0))}
+    except Exception:
+        return None
+
+def _revoke_auth_session_key(key: str) -> None:
+    try:
+        if not key:
+            return
+        store = _auth_session_store()
+        store.pop(str(key), None)
+    except Exception:
+        pass
+
+
+
 def _logout_and_clear():
     # 1) 세션 인증정보 제거 (기존 로직 유지)
     _reset_chat_only(keep_auth=False)
 
     # 2) Streamlit query params도 비우기 (가능하면)
+    # 2) (Optional) 세션키 방식(auth=<opaque>)을 쓰는 경우, 로그아웃 시 즉시 무효화
+    qp = _qp_get()
+    tok = None
+    try:
+        if "auth" in qp:
+            tok = qp.get("auth")
+            if isinstance(tok, list):
+                tok = tok[0] if tok else None
+    except Exception:
+        tok = None
+    if tok and "." not in str(tok):
+        _revoke_auth_session_key(str(tok))
+
     try:
         st.query_params.clear()
     except Exception:
@@ -969,8 +1030,9 @@ def require_auth():
             st.session_state.pop("auth_user_id", None)
         else:
             if "auth" not in qp:
-                tok = _make_auth_token(st.session_state["auth_user_id"])
+                tok = _make_auth_session_key(st.session_state["auth_user_id"])
                 _qp_set(auth=tok)
+                st.rerun()
             return
 
     token = None
@@ -980,7 +1042,8 @@ def require_auth():
             if isinstance(token, list): token = token[0] if token else None
     except Exception: token = None
 
-    payload = _verify_auth_token(str(token or ""))
+    token_s = str(token or "").strip()
+    payload = _verify_auth_token(token_s) if (token_s and "." in token_s) else _verify_auth_session_key(token_s)
     if payload:
         uid = payload["uid"]
         rec = users.get(uid)
@@ -1031,7 +1094,7 @@ def require_auth():
             st.session_state["auth_display_name"] = rec.get("display_name", uid)
             st.session_state["client_instance_id"] = st.session_state.get("client_instance_id") or uuid4().hex[:10]
 
-            tok = _make_auth_token(uid)
+            tok = _make_auth_session_key(uid)
             _qp_set(auth=tok)
             st.rerun() 
             return
