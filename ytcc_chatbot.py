@@ -321,7 +321,7 @@ def _reset_chat_only(keep_auth: bool = True):
         "auth_ok", "auth_user_id", "auth_role", "auth_display_name",
         "client_instance_id", "_auth_users_cache"
     }
-    safe_flow_keys = {"session_to_load", "session_to_delete"}
+    safe_flow_keys = {"session_to_load", "session_to_delete", 'session_to_rename'}
     keep = set()
     if keep_auth:
         keep |= auth_keys
@@ -1786,6 +1786,56 @@ def load_session_from_github(sess_name: str):
         except Exception as e:
             st.error(f"세션 로드 실패: {e}")
 
+
+
+
+# region [Saved Sessions: Pending Actions Handler]
+def _process_saved_session_actions():
+    """Process pending session actions set by sidebar buttons (load/rename/delete).
+    Must run on each rerun to execute the action exactly once."""
+    if not _mongo_enabled():
+        return
+
+    user_id = st.session_state.get("auth_user_id") or "public"
+
+    # Rename
+    if st.session_state.get("session_to_rename"):
+        old_name, new_name = st.session_state.session_to_rename
+        st.session_state.pop("session_to_rename", None)
+        new_name = (new_name or "").strip()
+        if not new_name:
+            st.warning("새 이름이 비어있습니다.")
+        else:
+            try:
+                github_rename_session(user_id, old_name, new_name, None)
+                # update loaded marker if needed
+                if st.session_state.get("loaded_session_name") == old_name:
+                    st.session_state.loaded_session_name = new_name
+            except Exception as e:
+                st.error(f"세션 이름 변경 실패: {e}")
+        st.rerun()
+
+    # Delete
+    if st.session_state.get("session_to_delete"):
+        sess = st.session_state.session_to_delete
+        st.session_state.pop("session_to_delete", None)
+        try:
+            github_delete_folder(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{sess}", None)
+            # if currently loaded session deleted, clear chat (keep auth)
+            if st.session_state.get("loaded_session_name") == sess:
+                st.session_state.pop("loaded_session_name", None)
+        except Exception as e:
+            st.error(f"세션 삭제 실패: {e}")
+        st.rerun()
+
+    # Load
+    if st.session_state.get("session_to_load"):
+        sess = st.session_state.session_to_load
+        st.session_state.pop("session_to_load", None)
+        load_session_from_github(sess)
+        # load_session_from_github sets session_state; rerun to redraw UI with loaded chat
+        st.rerun()
+# endregion
 def serialize_comments_for_llm_from_file(csv_path: str,
                                          max_chars_per_comment=280,
                                          max_total_chars=420_000,
@@ -2550,6 +2600,7 @@ with st.sidebar:
     else:
         try:
             user_id = st.session_state.get("auth_user_id") or "public"
+            _process_saved_session_actions()
             sessions = sorted(github_list_dir(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}", GITHUB_TOKEN), reverse=True)
             
             if not sessions: 
