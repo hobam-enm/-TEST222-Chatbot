@@ -509,8 +509,8 @@ def _strip_html_to_text(s: str) -> str:
     try:
         import html as _html
         s = _html.unescape(s)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"⚠️ [_qp_set] failed: {e}")
     s = s.replace("\r\n", "\n").replace("\r", "\n")
     s = re.sub(r"\n{3,}", "\n\n", s).strip()
     return s
@@ -885,13 +885,8 @@ def _qp_set(**kwargs):
         
         for k, v in cleaned.items():
             st.query_params[k] = v
-    except Exception as e:
-        # NOTE: query_params set may fail depending on Streamlit runtime/browser context.
-        # Keep the app running, but leave a breadcrumb in logs for debugging.
-        try:
-            print(f"⚠️ [_qp_set] failed: {e}")
-        except Exception:
-            pass
+    except Exception:
+        pass
 
 def _b64url_encode(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).decode("utf-8").rstrip("=")
@@ -929,67 +924,187 @@ def _verify_auth_token(token: str) -> Optional[dict]:
     except Exception:
         return None
 
-@st.cache_resource
-def _auth_session_store() -> dict:
-    # In-memory auth session map: {key: {"uid": str, "exp": int}}
-    # NOTE: This lives per Streamlit server instance (good enough for our use-case).
-    return {}
 
-def _make_auth_session_key(user_id: str, ttl_hours: int = None) -> str:
-    ttl = ttl_hours if ttl_hours is not None else int(st.secrets.get("AUTH_SESSION_TTL_HOURS", st.secrets.get("AUTH_TOKEN_TTL_HOURS", 24*14)) or (24*14))
-    exp = int(time.time() + max(60, ttl * 3600))
-    key = uuid4().hex  # opaque short credential for URL
-    store = _auth_session_store()
-    store[key] = {"uid": user_id, "exp": exp}
-    return key
-
-def _verify_auth_session_key(key: str) -> Optional[dict]:
+# --- MongoDB (URI / PyMongo) based session store (auth only) ---
+def _mongo_uri() -> str:
+    # Support existing secrets layout:
+    #   [mongo]
+    #   uri = "mongodb+srv://..."
+    # and also common flat keys: MONGO_URI / MONGODB_URI
     try:
-        if not key:
-            return None
-        store = _auth_session_store()
-        rec = store.get(str(key))
-        if not rec:
-            return None
-        if int(rec.get("exp", 0)) < int(time.time()):
-            store.pop(str(key), None)
-            return None
-        uid = (rec.get("uid") or "").strip()
-        if not uid:
-            return None
-        return {"uid": uid, "exp": int(rec.get("exp", 0))}
+        mongo_block = st.secrets.get("mongo", {}) or {}
+        uri = mongo_block.get("uri", "") or ""
     except Exception:
+        uri = ""
+    uri = str(uri or st.secrets.get("MONGO_URI", "") or st.secrets.get("MONGODB_URI", "") or "").strip()
+    return uri
+
+def _mongo_enabled() -> bool:
+    return bool(_mongo_uri())
+
+@st.cache_resource
+def _mongo_client():
+    # Keep this isolated to auth; if pymongo isn't installed or connection fails, we gracefully fallback.
+    try:
+        from pymongo import MongoClient  # type: ignore
+        uri = _mongo_uri()
+        if not uri:
+            return None
+        return MongoClient(uri, serverSelectionTimeoutMS=3000, connectTimeoutMS=3000, socketTimeoutMS=3000)
+    except Exception as e:
+        print(f"⚠️ [mongo] client init failed: {e}")
         return None
 
-def _revoke_auth_session_key(key: str) -> None:
+def _mongo_db_name() -> str:
+    # Prefer explicit secret, else try to parse default DB from URI path, else fallback to a safe name.
     try:
-        if not key:
-            return
-        store = _auth_session_store()
-        store.pop(str(key), None)
+        mongo_block = st.secrets.get("mongo", {}) or {}
+        mongo_db = mongo_block.get("db_name") or mongo_block.get("db") or mongo_block.get("database") or ""
+    except Exception:
+        mongo_db = ""
+    name = str(st.secrets.get("MONGO_DB_NAME", "") or mongo_db or "").strip()
+    if name:
+        return name
+    uri = _mongo_uri()
+    try:
+        if "/" in uri:
+            tail = uri.split("/", 3)[-1]
+            db = tail.split("?", 1)[0].strip()
+            if db and not db.startswith("@") and db not in ("admin",):
+                return db
     except Exception:
         pass
+    return "ytcc_auth"
 
+def _mongo_sessions_coll_name() -> str:
+    try:
+        mongo_block = st.secrets.get("mongo", {}) or {}
+        coll = mongo_block.get("sessions_coll") or mongo_block.get("sessions_collection") or mongo_block.get("coll") or ""
+    except Exception:
+        coll = ""
+    return str(st.secrets.get("MONGO_SESSIONS_COLL", "") or coll or "sessions").strip() or "sessions"
 
+def _mongo_sessions_coll():
+    try:
+        cli = _mongo_client()
+        if cli is None:
+            return None
+        db = cli[_mongo_db_name()]
+        coll = db[_mongo_sessions_coll_name()]
+        # Best-effort TTL index (optional). Store expiresAt as datetime.
+        try:
+            from pymongo import ASCENDING  # type: ignore
+            coll.create_index([("expiresAt", ASCENDING)], expireAfterSeconds=0)
+            coll.create_index([("uid", ASCENDING)])
+        except Exception:
+            pass
+        return coll
+    except Exception as e:
+        print(f"⚠️ [mongo] coll init failed: {e}")
+        return None
+
+def _make_session_id() -> str:
+    return base64.urlsafe_b64encode(os.urandom(24)).decode("utf-8").rstrip("=")
+
+def _create_mongo_session(uid: str, ttl_hours: int = None) -> Optional[str]:
+    try:
+        coll = _mongo_sessions_coll()
+        if coll is None:
+            return None
+        ttl = ttl_hours if ttl_hours is not None else int(st.secrets.get("AUTH_TOKEN_TTL_HOURS", 24*14) or (24*14))
+        exp = int(time.time() + max(60, ttl * 3600))
+        sid = _make_session_id()
+        now = datetime.utcnow()
+        coll.insert_one({
+            "_id": sid,
+            "uid": uid,
+            "exp": exp,
+            "expiresAt": datetime.utcfromtimestamp(exp),
+            "revoked": False,
+            "createdAt": now,
+            "lastSeenAt": now,
+        })
+        return sid
+    except Exception as e:
+        print(f"⚠️ [mongo] create session failed: {e}")
+        return None
+
+def _verify_mongo_session(sid: str) -> Optional[dict]:
+    try:
+        if not sid or "." in sid:
+            return None
+        coll = _mongo_sessions_coll()
+        if coll is None:
+            return None
+        doc = coll.find_one({"_id": sid, "revoked": {"$ne": True}})
+        if not doc:
+            return None
+        exp = int(doc.get("exp") or 0)
+        if exp < int(time.time()):
+            return None
+        uid = str(doc.get("uid") or "").strip()
+        if not uid:
+            return None
+        try:
+            coll.update_one({"_id": sid}, {"$set": {"lastSeenAt": datetime.utcnow()}})
+        except Exception:
+            pass
+        return {"uid": uid, "exp": exp, "sid": sid}
+    except Exception as e:
+        print(f"⚠️ [mongo] verify session failed: {e}")
+        return None
+
+def _revoke_mongo_session(sid: str) -> None:
+    try:
+        if not sid or "." in sid:
+            return
+        coll = _mongo_sessions_coll()
+        if coll is None:
+            return
+        coll.update_one({"_id": sid}, {"$set": {"revoked": True, "revokedAt": datetime.utcnow()}})
+    except Exception as e:
+        print(f"⚠️ [mongo] revoke session failed: {e}")
+
+def _redirect_with_auth(auth_value: str):
+    # Force the browser URL to include auth=... (reliably survives refresh).
+    safe_val = json.dumps(str(auth_value))
+    st_html(
+        f"""
+        <script>
+          (function () {{
+            try {{
+              var url = new URL(window.location.href);
+              url.searchParams.set("auth", {safe_val});
+              url.searchParams.delete("logout");
+              window.location.replace(url.toString());
+            }} catch (e) {{
+              var base = window.location.href.split("?")[0];
+              window.location.replace(base + "?auth=" + encodeURIComponent({safe_val}));
+            }}
+          }})();
+        </script>
+        """,
+        height=0
+    )
+    st.stop()
 
 def _logout_and_clear():
     # 1) 세션 인증정보 제거 (기존 로직 유지)
+    #    + Mongo 세션이면 즉시 revoke
+    try:
+        qp = _qp_get()
+        tok = qp.get("auth") if isinstance(qp, dict) else None
+        if isinstance(tok, list):
+            tok = tok[0] if tok else None
+        tok = str(tok or "").strip()
+        if tok and "." not in tok:
+            _revoke_mongo_session(tok)
+    except Exception:
+        pass
+
     _reset_chat_only(keep_auth=False)
 
     # 2) Streamlit query params도 비우기 (가능하면)
-    # 2) (Optional) 세션키 방식(auth=<opaque>)을 쓰는 경우, 로그아웃 시 즉시 무효화
-    qp = _qp_get()
-    tok = None
-    try:
-        if "auth" in qp:
-            tok = qp.get("auth")
-            if isinstance(tok, list):
-                tok = tok[0] if tok else None
-    except Exception:
-        tok = None
-    if tok and "." not in str(tok):
-        _revoke_auth_session_key(str(tok))
-
     try:
         st.query_params.clear()
     except Exception:
@@ -1030,9 +1145,11 @@ def require_auth():
             st.session_state.pop("auth_user_id", None)
         else:
             if "auth" not in qp:
-                tok = _make_auth_session_key(st.session_state["auth_user_id"])
-                _qp_set(auth=tok)
-                st.rerun()
+                uid = st.session_state["auth_user_id"]
+                tok = _create_mongo_session(uid) if _mongo_enabled() else None
+                if not tok:
+                    tok = _make_auth_token(uid)
+                _redirect_with_auth(tok)
             return
 
     token = None
@@ -1042,8 +1159,8 @@ def require_auth():
             if isinstance(token, list): token = token[0] if token else None
     except Exception: token = None
 
-    token_s = str(token or "").strip()
-    payload = _verify_auth_token(token_s) if (token_s and "." in token_s) else _verify_auth_session_key(token_s)
+    token_str = str(token or "")
+    payload = _verify_auth_token(token_str) if "." in token_str else _verify_mongo_session(token_str)
     if payload:
         uid = payload["uid"]
         rec = users.get(uid)
@@ -1094,9 +1211,12 @@ def require_auth():
             st.session_state["auth_display_name"] = rec.get("display_name", uid)
             st.session_state["client_instance_id"] = st.session_state.get("client_instance_id") or uuid4().hex[:10]
 
-            tok = _make_auth_session_key(uid)
-            _qp_set(auth=tok)
-            st.rerun() 
+            tok = _create_mongo_session(uid) if _mongo_enabled() else None
+
+            if not tok:
+                tok = _make_auth_token(uid)
+
+            _redirect_with_auth(tok)
             return
 
     st.stop()
