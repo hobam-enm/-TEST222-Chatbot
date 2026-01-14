@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8"/>
+    <script src="https://unpkg.com/streamlit-component-lib/dist/streamlit-component-lib.js"></script>
+  </head>
+  <body>
+    <script>
+      // Minimal LocalStorage bridge for Streamlit.
+      // Args: storage_key, action in {"get","set","delete"}, value, default
+      function onRender(event) {
+        const args = event.detail.args || {};
+        const k = String(args.storage_key || "");
+        const action = String(args.action || "get");
+        const v = args.value === undefined ? "" : String(args.value);
+        const defv = args.default === undefined ? "" : String(args.default);
+
+        let result = "";
+        try {
+          if (!k) {
+            result = defv;
+          } else if (action === "get") {
+            const got = window.localStorage.getItem(k);
+            result = (got === null ? defv : got);
+          } else if (action === "set") {
+            window.localStorage.setItem(k, v);
+            result = v;
+          } else if (action === "delete") {
+            window.localStorage.removeItem(k);
+            result = "";
+          } else {
+            result = defv;
+          }
+        } catch (e) {
+          result = defv;
+        }
+
+        Streamlit.setComponentValue(result);
+        Streamlit.setFrameHeight(0);
+      }
+
+      Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, onRender);
+      Streamlit.setComponentReady();
+      Streamlit.setFrameHeight(0);
+    </script>
+  </body>
+</html>

@@ -22,6 +22,7 @@ from googleapiclient.errors import HttpError
 import google.generativeai as genai
 from google.generativeai import caching  
 from streamlit.components.v1 import html as st_html
+import streamlit.components.v1 as components
 
 import pymongo
 from pymongo import MongoClient
@@ -38,6 +39,52 @@ GITHUB_BRANCH = st.secrets.get("GITHUB_BRANCH", "main")
 
 FIRST_TURN_PROMPT_FILE = "1차 질문 프롬프트.md"
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+# --- LocalStorage component (auth persistence without URL params) ---
+# Uses a tiny custom Streamlit component implemented as plain HTML/JS (no build step).
+_LOCAL_STORAGE_COMPONENT = None
+
+def _local_storage_component():
+    global _LOCAL_STORAGE_COMPONENT
+    if _LOCAL_STORAGE_COMPONENT is not None:
+        return _LOCAL_STORAGE_COMPONENT
+    try:
+        comp_path = os.path.join(REPO_DIR, "local_storage_component")
+        _LOCAL_STORAGE_COMPONENT = components.declare_component("local_storage_component", path=comp_path)
+    except Exception:
+        _LOCAL_STORAGE_COMPONENT = None
+    return _LOCAL_STORAGE_COMPONENT
+
+def ls_get(storage_key: str, default: str = "") -> str:
+    comp = _local_storage_component()
+    if comp is None:
+        return default
+    try:
+        val = comp(storage_key=storage_key, action="get", value="", default=default, key=f"ls_get_{storage_key}")
+        return (val or default) if isinstance(val, str) else default
+    except Exception:
+        return default
+
+def ls_set(storage_key: str, value: str) -> None:
+    comp = _local_storage_component()
+    if comp is None:
+        return
+    try:
+        comp(storage_key=storage_key, action="set", value=str(value or ""), default="", key=f"ls_set_{storage_key}")
+    except Exception:
+        return
+
+def ls_delete(storage_key: str) -> None:
+    comp = _local_storage_component()
+    if comp is None:
+        return
+    try:
+        comp(storage_key=storage_key, action="delete", value="", default="", key=f"ls_del_{storage_key}")
+    except Exception:
+        return
+
+LS_AUTH_KEY = "ytcc_auth_session"
 
 def load_first_turn_system_prompt() -> str:
     if not os.path.exists(FIRST_TURN_PROMPT_FILE):
@@ -1134,6 +1181,12 @@ def _logout_and_clear():
     except Exception:
         pass
 
+    # Remove persisted browser session
+    try:
+        ls_delete(LS_AUTH_KEY)
+    except Exception:
+        pass
+
     _reset_chat_only(keep_auth=False)
 
     # 2) Streamlit query params도 비우기 (가능하면)
@@ -1166,6 +1219,17 @@ def require_auth():
     if not auth_enabled:
         return
 
+    # Attempt restore from browser localStorage (works even when query params can't be updated)
+    if not is_authenticated():
+        stored = ls_get(LS_AUTH_KEY, default="")
+        if isinstance(stored, str) and stored:
+            payload = _verify_auth_token(stored) if "." in stored else (_verify_mongo_session(stored) if _mongo_enabled() else None)
+            if payload:
+                st.session_state["auth_ok"] = True
+                st.session_state["auth_user_id"] = payload.get("uid")
+                # client_instance_id is used elsewhere; keep stable once authenticated
+                st.session_state["client_instance_id"] = st.session_state.get("client_instance_id") or uuid4().hex[:10]
+
     qp = _qp_get()
     if "logout" in qp:
         _logout_and_clear()
@@ -1176,12 +1240,32 @@ def require_auth():
             st.session_state.pop("auth_ok", None)
             st.session_state.pop("auth_user_id", None)
         else:
-            if "auth" not in qp:
-                uid = st.session_state["auth_user_id"]
-                tok = _create_mongo_session(uid) if _mongo_enabled() else None
-                if not tok:
-                    tok = _make_auth_token(uid)
-                _redirect_with_auth(tok)
+            # Persist a session token in browser localStorage so refresh works even if URL params can't be updated.
+            uid = st.session_state.get("auth_user_id") or ""
+            if uid:
+                # If URL already has auth, store it; otherwise ensure we have a valid Mongo session id stored.
+                if "auth" in qp:
+                    tok = qp.get("auth")
+                    if isinstance(tok, list):
+                        tok = tok[0] if tok else ""
+                    if isinstance(tok, str) and tok:
+                        ls_set(LS_AUTH_KEY, tok)
+                else:
+                    cur = ls_get(LS_AUTH_KEY, default="")
+                    ok = False
+                    if isinstance(cur, str) and cur:
+                        if "." in cur:
+                            p = _verify_auth_token(cur)
+                            ok = bool(p and (p.get("uid") == uid))
+                        else:
+                            p = _verify_mongo_session(cur) if _mongo_enabled() else None
+                            ok = bool(p and (p.get("uid") == uid))
+                    if not ok:
+                        tok = _create_mongo_session(uid) if _mongo_enabled() else None
+                        if not tok:
+                            tok = _make_auth_token(uid)
+                        if tok:
+                            ls_set(LS_AUTH_KEY, tok)
             return
 
     token = None
@@ -1199,6 +1283,10 @@ def require_auth():
         if rec and (rec.get("active") is not False):
             st.session_state["auth_ok"] = True
             st.session_state["auth_user_id"] = uid
+            try:
+                if token: ls_set(LS_AUTH_KEY, str(token))
+            except Exception:
+                pass
             st.session_state["auth_role"] = rec.get("role", "user")
             st.session_state["auth_display_name"] = rec.get("display_name", uid)
             st.session_state["client_instance_id"] = st.session_state.get("client_instance_id") or uuid4().hex[:10]
@@ -1239,6 +1327,10 @@ def require_auth():
 
             st.session_state["auth_ok"] = True
             st.session_state["auth_user_id"] = uid
+            try:
+                if token: ls_set(LS_AUTH_KEY, str(token))
+            except Exception:
+                pass
             st.session_state["auth_role"] = rec.get("role", "user")
             st.session_state["auth_display_name"] = rec.get("display_name", uid)
             st.session_state["client_instance_id"] = st.session_state.get("client_instance_id") or uuid4().hex[:10]
@@ -1248,7 +1340,9 @@ def require_auth():
             if not tok:
                 tok = _make_auth_token(uid)
 
-            _redirect_with_auth(tok)
+            if tok:
+                ls_set(LS_AUTH_KEY, tok)
+            st.rerun()
             return
 
     st.stop()
