@@ -1066,20 +1066,52 @@ def _revoke_mongo_session(sid: str) -> None:
         print(f"⚠️ [mongo] revoke session failed: {e}")
 
 def _redirect_with_auth(auth_value: str):
-    # Force the browser URL to include auth=... (reliably survives refresh).
-    safe_val = json.dumps(str(auth_value))
+    """Ensure the browser URL includes ?auth=... .
+
+    1) Prefer Streamlit-native query param update + rerun (no iframe / no JS sandbox).
+    2) Fallback to a tiny JS redirect that targets the *parent* window, with a visible
+       manual link as a backup (so we never show a blank white screen).
+    """
+    auth_value = str(auth_value or "").strip()
+    if not auth_value:
+        return
+
+    # 1) Native (most reliable on Streamlit Cloud)
+    try:
+        st.query_params["auth"] = auth_value
+        if "logout" in st.query_params:
+            del st.query_params["logout"]
+        st.rerun()
+    except Exception as e:
+        print(f"⚠️ [_redirect_with_auth] st.query_params failed: {e}")
+
+    # 2) JS fallback (must target parent window; component iframe's window.location won't change address bar)
+    try:
+        from urllib.parse import quote as _q
+        safe_link = "?auth=" + _q(auth_value, safe="")
+    except Exception:
+        safe_link = "?auth=" + auth_value
+
+    st.info("로그인 처리 중입니다… 자동 이동이 안 되면 아래 '계속'을 눌러주세요.")
+    st.markdown(f"<div style='text-align:center; margin-top:0.5rem;'><a href='{safe_link}' style='font-weight:700;'>계속</a></div>", unsafe_allow_html=True)
+
+    safe_val = json.dumps(auth_value)
     st_html(
         f"""
         <script>
           (function () {{
             try {{
-              var url = new URL(window.location.href);
+              var target = (window.parent && window.parent !== window) ? window.parent : window;
+              var url = new URL(target.location.href);
               url.searchParams.set("auth", {safe_val});
               url.searchParams.delete("logout");
-              window.location.replace(url.toString());
+              target.location.replace(url.toString());
             }} catch (e) {{
-              var base = window.location.href.split("?")[0];
-              window.location.replace(base + "?auth=" + encodeURIComponent({safe_val}));
+              try {{
+                var target2 = (window.parent && window.parent !== window) ? window.parent : window;
+                var base = target2.location.href.split("?")[0];
+                target2.location.replace(base + "?auth=" + encodeURIComponent({safe_val}));
+              }} catch (e2) {{}}
             }}
           }})();
         </script>
