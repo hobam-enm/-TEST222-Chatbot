@@ -10,6 +10,7 @@ import gc
 import time
 import json
 import base64
+import gzip
 import requests
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -984,6 +985,40 @@ def _mongo_db_name() -> str:
         pass
     return "ytcc_auth"
 
+
+def _mongo_saved_sessions_coll_name() -> str:
+    # Separate collection for "saved chat sessions" (qa.json + comments/videos csv blobs).
+    # Keep default stable; allow override via secrets:
+    #   [mongo]
+    #   saved_sessions_coll = "ytcc_saved_sessions"
+    try:
+        mongo_block = st.secrets.get("mongo", {}) or {}
+        name = mongo_block.get("saved_sessions_coll") or mongo_block.get("saved_sessions_collection") or ""
+    except Exception:
+        name = ""
+    name = str(name or "").strip()
+    return name or "ytcc_saved_sessions"
+
+def _mongo_saved_sessions_coll():
+    client = _mongo_client()
+    if client is None:
+        return None
+    db = client[_mongo_db_name()]
+    return db[_mongo_saved_sessions_coll_name()]
+
+def _b64_gzip_bytes(raw: bytes) -> str:
+    if raw is None:
+        return ""
+    gz = gzip.compress(raw, compresslevel=6)
+    return base64.b64encode(gz).decode("ascii")
+
+def _ungzip_b64_to_bytes(s: str) -> bytes:
+    if not s:
+        return b""
+    gz = base64.b64decode(s.encode("ascii"))
+    return gzip.decompress(gz)
+
+
 def _mongo_sessions_coll_name() -> str:
     try:
         mongo_block = st.secrets.get("mongo", {}) or {}
@@ -1441,118 +1476,143 @@ class RotatingYouTube:
 # endregion
 
 
-# region [MongoDB Saved Session Management (GitHub 제거)]
-# NOTE: 기존 "GitHub 세션 저장/불러오기" 기능을 MongoDB로 완전 대체합니다.
-# - 저장 대상: qa(meta)만 저장 (chat / last_schema / sample_text)
-# - comments.csv / videos.csv는 저장하지 않습니다(용량/비용 방지)
-# - 따라서 "불러온 세션"에서는 CSV 다운로드 기능이 제공되지 않습니다.
+# region [GitHub & Session Management]
+def _gh_headers(token: str):
+    auth = f"Bearer {token}" if token else ""
+    return {
+        "Authorization": auth,
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "ytcc-chatbot"
+    }
 
-def _mongo_saved_sessions_coll_name() -> str:
-    # secrets가 수정 불가한 전제: 이름은 코드에서 고정(필요 시 환경변수/추가 키로 override 가능)
+def github_upload_file(repo, branch, path_in_repo, local_path, token):
+    url = f"https://api.github.com/repos/{repo}/contents/{path_in_repo}"
+    with open(local_path, "rb") as f:
+        content = base64.b64encode(f.read()).decode()
+
+    headers = _gh_headers(token)
+    get_resp = requests.get(url + f"?ref={branch}", headers=headers)
+    sha = get_resp.json().get("sha") if get_resp.ok else None
+
+    data = {
+        "message": f"archive: {os.path.basename(path_in_repo)}",
+        "content": content,
+        "branch": branch
+    }
+    if sha:
+        data["sha"] = sha
+
+    resp = requests.put(url, headers=headers, json=data)
+    resp.raise_for_status()
+    return resp.json()
+
+
+
+def github_list_dir(repo, branch, path, token):
+    # Mongo-backed listing for saved sessions when path starts with "sessions/".
     try:
-        mongo_block = st.secrets.get("mongo", {}) or {}
-        coll = mongo_block.get("saved_sessions_coll") or mongo_block.get("saved_sessions_collection") or ""
+        if _mongo_enabled() and isinstance(path, str) and path.startswith("sessions/"):
+            parts = path.split("/")
+            # sessions/{user_id}
+            user_id = parts[1] if len(parts) >= 2 else "public"
+            coll = _mongo_saved_sessions_coll()
+            if coll is None:
+                return []
+            cur = coll.find({"user_id": user_id}, {"sess_name": 1, "updated_at": 1})
+            # sort by updated_at desc if possible
+            rows = list(cur)
+            rows.sort(key=lambda d: d.get("updated_at") or "", reverse=True)
+            return [d.get("sess_name") for d in rows if d.get("sess_name")]
     except Exception:
-        coll = ""
-    return str(st.secrets.get("MONGO_SAVED_SESSIONS_COLL", "") or coll or "ytcc_saved_sessions").strip() or "ytcc_saved_sessions"
-
-def _mongo_saved_sessions_coll():
-    try:
-        cli = _mongo_client()
-        if cli is None:
-            return None
-        db = cli[_mongo_db_name()]  # 동일 클러스터/동일 DB 네임 사용 (secrets 변경 없음)
-        coll = db[_mongo_saved_sessions_coll_name()]
-        try:
-            from pymongo import ASCENDING, DESCENDING  # type: ignore
-            coll.create_index([("user_id", ASCENDING), ("updatedAt", DESCENDING)])
-            coll.create_index([("user_id", ASCENDING), ("sess_name", ASCENDING)], unique=True)
-        except Exception:
-            pass
-        return coll
-    except Exception as e:
-        print(f"⚠️ [mongo] saved-sessions coll init failed: {e}")
-        return None
-
-def _ss_doc_id(user_id: str, sess_name: str) -> str:
-    # 사용자 단위 네임스페이스 보장
-    return f"{user_id}::{sess_name}"
-
-def mongo_list_saved_sessions(user_id: str):
-    coll = _mongo_saved_sessions_coll()
-    if coll is None:
+        pass
+    # fallback to GitHub listing (legacy)
+    url = f"https://api.github.com/repos/{repo}/contents/{path}?ref={branch}"
+    r = requests.get(url, headers=_gh_headers(token))
+    if not r.ok:
         return []
+    out = []
+    for item in r.json():
+        if item.get("type") == "dir":
+            out.append(item.get("name"))
+    return out
+
+def github_download_file(repo, branch, path_in_repo, token, local_path):
+    url = f"https://api.github.com/repos/{repo}/contents/{path_in_repo}?ref={branch}"
+    resp = requests.get(url, headers=_gh_headers(token))
+    if resp.ok:
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        with open(local_path, "wb") as f:
+            f.write(base64.b64decode(resp.json()["content"]))
+        return True
+    return False
+
+
+def github_delete_folder(repo, branch, folder_path, token):
+    # Mongo-backed delete for saved sessions when path starts with "sessions/".
     try:
-        cur = coll.find({"user_id": user_id}, {"sess_name": 1, "updatedAt": 1}).sort("updatedAt", -1)
-        return [d.get("sess_name") for d in cur if d.get("sess_name")]
-    except Exception as e:
-        print(f"⚠️ [mongo] list saved sessions failed: {e}")
-        return []
+        if _mongo_enabled() and isinstance(folder_path, str) and folder_path.startswith("sessions/"):
+            # sessions/{user_id}/{sess_name}
+            parts = folder_path.split("/")
+            if len(parts) >= 3:
+                user_id = parts[1]
+                sess_name = parts[2]
+                coll = _mongo_saved_sessions_coll()
+                if coll is None:
+                    return
+                coll.delete_one({"_id": f"{user_id}/{sess_name}"})
+                return
+    except Exception:
+        pass
 
-def mongo_get_saved_session(user_id: str, sess_name: str):
-    coll = _mongo_saved_sessions_coll()
-    if coll is None:
-        return None
-    try:
-        doc = coll.find_one({"_id": _ss_doc_id(user_id, sess_name), "user_id": user_id})
-        return doc
-    except Exception as e:
-        print(f"⚠️ [mongo] get saved session failed: {e}")
-        return None
-
-def mongo_upsert_saved_session(user_id: str, sess_name: str, meta: dict):
-    coll = _mongo_saved_sessions_coll()
-    if coll is None:
-        raise RuntimeError("MongoDB가 설정되지 않았습니다.")
-    now = datetime.utcnow()
-    _id = _ss_doc_id(user_id, sess_name)
-    payload = {
-        "_id": _id,
-        "user_id": user_id,
-        "sess_name": sess_name,
-        "meta": meta,
-        "has_csv": False,
-        "updatedAt": now,
-    }
-    # createdAt은 최초에만 세팅
-    coll.update_one({"_id": _id}, {"$set": payload, "$setOnInsert": {"createdAt": now}}, upsert=True)
-
-def mongo_delete_saved_session(user_id: str, sess_name: str):
-    coll = _mongo_saved_sessions_coll()
-    if coll is None:
+    # fallback to GitHub delete (legacy)
+    contents_url = f"https://api.github.com/repos/{repo}/contents/{folder_path}?ref={branch}"
+    headers = _gh_headers(token)
+    resp = requests.get(contents_url, headers=headers)
+    if not resp.ok:
         return
-    try:
-        coll.delete_one({"_id": _ss_doc_id(user_id, sess_name), "user_id": user_id})
-    except Exception as e:
-        print(f"⚠️ [mongo] delete saved session failed: {e}")
+    for item in resp.json():
+        delete_url = f"https://api.github.com/repos/{repo}/contents/{item['path']}"
+        data = {"message": f"delete: {item['name']}", "sha": item['sha'], "branch": branch}
+        requests.delete(delete_url, headers=headers, json=data).raise_for_status()
 
-def mongo_rename_saved_session(user_id: str, old_name: str, new_name: str):
-    coll = _mongo_saved_sessions_coll()
-    if coll is None:
-        raise RuntimeError("MongoDB가 설정되지 않았습니다.")
-    if not old_name or not new_name or old_name == new_name:
+
+def github_rename_session(user_id: str, old_name: str, new_name: str, token):
+    # Mongo-backed rename for saved sessions.
+    if _mongo_enabled():
+        coll = _mongo_saved_sessions_coll()
+        if coll is None:
+            raise Exception("Mongo 연결 실패")
+        old_id = f"{user_id}/{old_name}"
+        new_id = f"{user_id}/{new_name}"
+        if coll.find_one({"_id": new_id}):
+            raise Exception("동일한 세션명이 이미 존재합니다.")
+        doc = coll.find_one({"_id": old_id})
+        if not doc:
+            raise Exception("기존 세션을 찾을 수 없습니다.")
+        doc["_id"] = new_id
+        doc["sess_name"] = new_name
+        now = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
+        doc["updated_at"] = now
+        # insert new, delete old
+        coll.insert_one(doc)
+        coll.delete_one({"_id": old_id})
         return
-    old_id = _ss_doc_id(user_id, old_name)
-    new_id = _ss_doc_id(user_id, new_name)
-    doc = coll.find_one({"_id": old_id, "user_id": user_id})
-    if not doc:
-        raise RuntimeError("기존 세션을 찾지 못했습니다.")
-    # 새 문서로 복제
-    now = datetime.utcnow()
-    meta = doc.get("meta") or {}
-    new_doc = {
-        "_id": new_id,
-        "user_id": user_id,
-        "sess_name": new_name,
-        "meta": meta,
-        "has_csv": False,
-        "createdAt": doc.get("createdAt") or now,
-        "updatedAt": now,
-    }
-    # 업서트(만약 동일 이름이 이미 있으면 덮어쓰기)
-    coll.replace_one({"_id": new_id}, new_doc, upsert=True)
-    # 기존 삭제
-    coll.delete_one({"_id": old_id})
+
+    # fallback legacy (GitHub)
+    contents_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/sessions/{user_id}/{old_name}?ref={GITHUB_BRANCH}"
+    resp = requests.get(contents_url, headers=_gh_headers(token))
+    resp.raise_for_status()
+    files_to_move = resp.json()
+
+    for item in files_to_move:
+        filename = item['name']
+        local_path = os.path.join(SESS_DIR, filename)
+        if not github_download_file(GITHUB_REPO, GITHUB_BRANCH, item['path'], token, local_path):
+            raise Exception(f"Failed to download {filename} from {old_name}")
+        github_upload_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{new_name}/{filename}", local_path, token)
+
+    github_delete_folder(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{old_name}", token)
 
 def _session_base_keyword() -> str:
     schema = st.session_state.get("last_schema", {}) or {}
@@ -1562,19 +1622,14 @@ def _session_base_keyword() -> str:
     base = base[:12] if base else "세션"
     return base
 
-def _build_session_name() -> str:
-    # 이미 불러온 세션이 있으면 그 이름을 그대로 사용 (기존 동작 동일)
-    if st.session_state.get("loaded_session_name"):
-        return st.session_state.loaded_session_name
-
-    user_id = st.session_state.get('auth_user_id') or 'public'
-    base = _session_base_keyword()
-    n = _next_session_number(user_id, base)
-    return f"{base}{n}"
-
 def _next_session_number(user_id: str, base: str) -> int:
-    # 기존 GitHub 디렉토리 스캔과 동일한 규칙
-    sessions = mongo_list_saved_sessions(user_id) or []
+    try:
+        if not all([GITHUB_TOKEN, GITHUB_REPO]):
+            return 1
+        sessions = github_list_dir(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}", GITHUB_TOKEN) or []
+    except Exception:
+        sessions = []
+
     pat = re.compile(rf"^{re.escape(base)}(\d+)$")
     max_n = 0
     for s in sessions:
@@ -1586,92 +1641,151 @@ def _next_session_number(user_id: str, base: str) -> int:
                 pass
     return max_n + 1 if max_n > 0 else 1
 
+def _build_session_name() -> str:
+    if st.session_state.get("loaded_session_name"):
+        return st.session_state.loaded_session_name
+
+    user_id = st.session_state.get('auth_user_id') or 'public'
+    base = _session_base_keyword()
+    n = _next_session_number(user_id, base)
+    return f"{base}{n}"
+
+
+
 def save_current_session_to_github():
-    """[호환용 이름 유지] GitHub 저장 -> Mongo 저장으로 대체"""
-    # 기존과 동일하게: 저장 가능한 조건(last_csv, chat 존재)
-    if not (st.session_state.get("chat") and st.session_state.get("last_csv")):
-        return False, "저장할 데이터가 없습니다."
-    if not _mongo_enabled() or _mongo_saved_sessions_coll() is None:
-        return False, "MongoDB 설정/연결이 없습니다."
+    # NOTE: kept function name for UI compatibility.
+    # MongoDB-only: stores qa.json + comments.csv (+ videos.csv) in Mongo (compressed) and also
+    # recreates local files on load so downstream logic remains identical.
+    if not (_mongo_enabled() and st.session_state.get("chat") and st.session_state.get("last_csv")):
+        return False, "저장할 데이터가 없거나 Mongo 설정이 누락되었습니다."
+
+    coll = _mongo_saved_sessions_coll()
+    if coll is None:
+        return False, "Mongo 연결에 실패했습니다."
 
     sess_name = _build_session_name()
-    user_id = st.session_state.get('auth_user_id') or 'public'
+    user_id = st.session_state.get("auth_user_id") or "public"
+    local_dir = os.path.join(SESS_DIR, user_id, sess_name)
+    os.makedirs(local_dir, exist_ok=True)
 
     try:
+        # 1) meta (qa.json)
         meta_data = {
-            "chat": st.session_state.get("chat", []),
-            "last_schema": st.session_state.get("last_schema", None),
-            "sample_text": st.session_state.get("sample_text", ""),
+            "chat": st.session_state.chat,
+            "last_schema": st.session_state.get("last_schema"),
+            "sample_text": st.session_state.get("sample_text"),
         }
-        mongo_upsert_saved_session(user_id, sess_name, meta_data)
+        meta_path = os.path.join(local_dir, "qa.json")
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta_data, f, ensure_ascii=False, indent=2)
+
+        # 2) comments.csv (required)
+        comments_src = st.session_state.last_csv
+        comments_path = os.path.join(local_dir, "comments.csv")
+        # keep local copy for identical behavior
+        try:
+            os.system(f'cp "{comments_src}" "{comments_path}"')
+        except Exception:
+            pass
+
+        with open(comments_src, "rb") as f:
+            comments_raw = f.read()
+
+        # 3) videos.csv (optional)
+        videos_b64gz = ""
+        videos_bytes = b""
+        videos_path = os.path.join(local_dir, "videos.csv")
+        if st.session_state.get("last_df") is not None:
+            try:
+                st.session_state.last_df.to_csv(videos_path, index=False, encoding="utf-8-sig")
+                with open(videos_path, "rb") as f:
+                    videos_bytes = f.read()
+                videos_b64gz = _b64_gzip_bytes(videos_bytes)
+            except Exception:
+                videos_b64gz = ""
+
+        now = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
+
+        doc_id = f"{user_id}/{sess_name}"
+        update = {
+            "$set": {
+                "user_id": user_id,
+                "sess_name": sess_name,
+                "meta": meta_data,
+                "comments_b64gz": _b64_gzip_bytes(comments_raw),
+                "videos_b64gz": videos_b64gz,
+                "comments_bytes": len(comments_raw),
+                "videos_bytes": len(videos_bytes) if videos_bytes else 0,
+                "updated_at": now,
+            },
+            "$setOnInsert": {"created_at": now},
+        }
+        coll.update_one({"_id": doc_id}, update, upsert=True)
+
         st.session_state.loaded_session_name = sess_name
-        # 불러온 세션이 아니라 '현재 세션 저장'이므로 다운로드 유지(현재 세션의 last_csv는 그대로 존재)
-        st.session_state["loaded_from_archive"] = False
         return True, sess_name
+
     except Exception as e:
         return False, f"저장 실패: {e}"
 
+
 def load_session_from_github(sess_name: str):
-    """[호환용 이름 유지] GitHub 불러오기 -> Mongo 불러오기로 대체"""
+    # NOTE: kept function name for UI compatibility. MongoDB-only.
+    user_id = st.session_state.get("auth_user_id") or "public"
+    coll = _mongo_saved_sessions_coll()
+    if coll is None:
+        st.error("Mongo 연결에 실패했습니다.")
+        return
+
+    doc_id = f"{user_id}/{sess_name}"
     with st.spinner(f"세션 '{sess_name}' 불러오는 중..."):
         try:
-            user_id = st.session_state.get('auth_user_id') or 'public'
-            doc = mongo_get_saved_session(user_id, sess_name)
+            doc = coll.find_one({"_id": doc_id})
             if not doc:
-                st.error("세션을 찾지 못했습니다.")
+                st.error("세션을 찾을 수 없습니다.")
                 return
-            meta = doc.get("meta") or {}
 
+            meta = doc.get("meta") or {}
+            if not (meta.get("chat") and doc.get("comments_b64gz")):
+                st.error("세션 핵심 데이터가 손상되었거나 누락되었습니다.")
+                return
+
+            local_dir = os.path.join(SESS_DIR, user_id, sess_name)
+            os.makedirs(local_dir, exist_ok=True)
+
+            # reset chat but keep auth
             _reset_chat_only(keep_auth=True)
 
-            # CSV는 저장하지 않으므로, 불러온 세션에서는 다운로드/원본 CSV 기능을 포기
-            st.session_state.update({
-                "chat": meta.get("chat", []),
-                "last_schema": meta.get("last_schema", None),
-                "sample_text": meta.get("sample_text", ""),
-                "loaded_session_name": sess_name,
-                "loaded_from_archive": True,
-                # 다운로드/원본 참조 끊기
-                "last_csv": None,
-                "last_df": None,
-            })
+            # restore meta
+            st.session_state.chat = meta.get("chat") or []
+            st.session_state.last_schema = meta.get("last_schema") or {}
+            st.session_state.sample_text = meta.get("sample_text") or ""
+            st.session_state.loaded_session_name = sess_name
+
+            # restore comments.csv to local file and point last_csv to it
+            comments_bytes = _ungzip_b64_to_bytes(doc.get("comments_b64gz") or "")
+            comments_path = os.path.join(local_dir, "comments.csv")
+            with open(comments_path, "wb") as f:
+                f.write(comments_bytes)
+            st.session_state.last_csv = comments_path
+
+            # restore videos.csv if present
+            videos_b64gz = doc.get("videos_b64gz") or ""
+            if videos_b64gz:
+                videos_bytes = _ungzip_b64_to_bytes(videos_b64gz)
+                videos_path = os.path.join(local_dir, "videos.csv")
+                with open(videos_path, "wb") as f:
+                    f.write(videos_bytes)
+                try:
+                    st.session_state.last_df = pd.read_csv(videos_path)
+                except Exception:
+                    st.session_state.last_df = None
+            else:
+                st.session_state.last_df = None
+
         except Exception as e:
             st.error(f"세션 로드 실패: {e}")
 
-# 기존 이벤트 처리 키를 그대로 사용
-if 'session_to_load' in st.session_state:
-    load_session_from_github(st.session_state.pop('session_to_load'))
-    st.rerun()
-
-if 'session_to_delete' in st.session_state:
-    sess_name = st.session_state.pop('session_to_delete')
-    with st.spinner(f"세션 '{sess_name}' 삭제 중..."):
-        user_id = st.session_state.get("auth_user_id") or "public"
-        mongo_delete_saved_session(user_id, sess_name)
-    st.success("세션 삭제 완료.")
-    time.sleep(1)
-    st.rerun()
-
-if 'session_to_rename' in st.session_state:
-    old, new = st.session_state.pop('session_to_rename')
-    if old and new and old != new:
-        with st.spinner("이름 변경 중..."):
-            try:
-                user_id = st.session_state.get("auth_user_id") or "public"
-                mongo_rename_saved_session(user_id, old, new)
-                # loaded_session_name도 갱신
-                if st.session_state.get("loaded_session_name") == old:
-                    st.session_state["loaded_session_name"] = new
-                st.success("이름 변경 완료!")
-            except Exception as e:
-                st.error(f"변경 실패: {e}")
-        time.sleep(1)
-        st.rerun()
-# endregion
-
-
-
-# region [Data Processing & Utils]
 def serialize_comments_for_llm_from_file(csv_path: str,
                                          max_chars_per_comment=280,
                                          max_total_chars=420_000,
@@ -2436,7 +2550,7 @@ with st.sidebar:
     else:
         try:
             user_id = st.session_state.get("auth_user_id") or "public"
-            sessions = mongo_list_saved_sessions(user_id)
+            sessions = sorted(github_list_dir(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}", GITHUB_TOKEN), reverse=True)
             
             if not sessions: 
                 st.caption("기록 없음")
