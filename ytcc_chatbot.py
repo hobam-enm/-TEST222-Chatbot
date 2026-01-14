@@ -22,7 +22,14 @@ from googleapiclient.errors import HttpError
 import google.generativeai as genai
 from google.generativeai import caching  
 from streamlit.components.v1 import html as st_html
-import streamlit.components.v1 as components
+
+# Optional: browser storage bridge (used for login persistence without URL params)
+try:
+    from streamlit_js_eval import streamlit_js_eval  # pip: streamlit-js-eval
+    _SJE_AVAILABLE = True
+except Exception:
+    streamlit_js_eval = None
+    _SJE_AVAILABLE = False
 
 import pymongo
 from pymongo import MongoClient
@@ -39,52 +46,6 @@ GITHUB_BRANCH = st.secrets.get("GITHUB_BRANCH", "main")
 
 FIRST_TURN_PROMPT_FILE = "1차 질문 프롬프트.md"
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
-
-
-# --- LocalStorage component (auth persistence without URL params) ---
-# Uses a tiny custom Streamlit component implemented as plain HTML/JS (no build step).
-_LOCAL_STORAGE_COMPONENT = None
-
-def _local_storage_component():
-    global _LOCAL_STORAGE_COMPONENT
-    if _LOCAL_STORAGE_COMPONENT is not None:
-        return _LOCAL_STORAGE_COMPONENT
-    try:
-        comp_path = os.path.join(REPO_DIR, "local_storage_component")
-        _LOCAL_STORAGE_COMPONENT = components.declare_component("local_storage_component", path=comp_path)
-    except Exception:
-        _LOCAL_STORAGE_COMPONENT = None
-    return _LOCAL_STORAGE_COMPONENT
-
-def ls_get(storage_key: str, default: str = "") -> str:
-    comp = _local_storage_component()
-    if comp is None:
-        return default
-    try:
-        val = comp(storage_key=storage_key, action="get", value="", default=default, key=f"ls_get_{storage_key}")
-        return (val or default) if isinstance(val, str) else default
-    except Exception:
-        return default
-
-def ls_set(storage_key: str, value: str) -> None:
-    comp = _local_storage_component()
-    if comp is None:
-        return
-    try:
-        comp(storage_key=storage_key, action="set", value=str(value or ""), default="", key=f"ls_set_{storage_key}")
-    except Exception:
-        return
-
-def ls_delete(storage_key: str) -> None:
-    comp = _local_storage_component()
-    if comp is None:
-        return
-    try:
-        comp(storage_key=storage_key, action="delete", value="", default="", key=f"ls_del_{storage_key}")
-    except Exception:
-        return
-
-LS_AUTH_KEY = "ytcc_auth_session"
 
 def load_first_turn_system_prompt() -> str:
     if not os.path.exists(FIRST_TURN_PROMPT_FILE):
@@ -1167,6 +1128,71 @@ def _redirect_with_auth(auth_value: str):
     )
     st.stop()
 
+
+# --- Browser localStorage helpers (team-tool login persistence) ---
+_AUTH_LS_KEY = str(st.secrets.get("AUTH_LS_KEY", "") or "ytcc_auth_token").strip() or "ytcc_auth_token"
+
+def _ls_get_item(key: str):
+    if not _SJE_AVAILABLE:
+        return None
+    try:
+        v = streamlit_js_eval(
+            js_expressions=f"localStorage.getItem({json.dumps(key)})",
+            key=f"ls_get::{key}",
+            want_output=True
+        )
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v
+        return str(v)
+    except Exception as e:
+        print(f"⚠️ [localStorage] get failed: {e}")
+        return None
+
+def _ls_set_item(key: str, value: str):
+    if not _SJE_AVAILABLE:
+        return
+    try:
+        _k = f"ls_set::{key}::{int(time.time()*1000)}"
+        streamlit_js_eval(
+            js_expressions=f"localStorage.setItem({json.dumps(key)}, {json.dumps(str(value))});",
+            key=_k,
+            want_output=False
+        )
+    except Exception as e:
+        print(f"⚠️ [localStorage] set failed: {e}")
+
+def _ls_del_item(key: str):
+    if not _SJE_AVAILABLE:
+        return
+    try:
+        _k = f"ls_del::{key}::{int(time.time()*1000)}"
+        streamlit_js_eval(
+            js_expressions=f"localStorage.removeItem({json.dumps(key)});",
+            key=_k,
+            want_output=False
+        )
+    except Exception as e:
+        print(f"⚠️ [localStorage] del failed: {e}")
+
+def _get_persisted_token(qp: dict) -> str:
+    # Priority: URL qp auth (if present) > session_state cached token > localStorage
+    tok = ""
+    try:
+        if isinstance(qp, dict) and "auth" in qp:
+            v = qp.get("auth")
+            if isinstance(v, list):
+                v = v[0] if v else ""
+            tok = str(v or "").strip()
+    except Exception:
+        pass
+    if not tok:
+        tok = str(st.session_state.get("_auth_token") or "").strip()
+    if not tok:
+        tok = str(_ls_get_item(_AUTH_LS_KEY) or "").strip()
+    return tok
+
 def _logout_and_clear():
     # 1) 세션 인증정보 제거 (기존 로직 유지)
     #    + Mongo 세션이면 즉시 revoke
@@ -1178,12 +1204,6 @@ def _logout_and_clear():
         tok = str(tok or "").strip()
         if tok and "." not in tok:
             _revoke_mongo_session(tok)
-    except Exception:
-        pass
-
-    # Remove persisted browser session
-    try:
-        ls_delete(LS_AUTH_KEY)
     except Exception:
         pass
 
@@ -1219,63 +1239,30 @@ def require_auth():
     if not auth_enabled:
         return
 
-    # Attempt restore from browser localStorage (works even when query params can't be updated)
-    if not is_authenticated():
-        stored = ls_get(LS_AUTH_KEY, default="")
-        if isinstance(stored, str) and stored:
-            payload = _verify_auth_token(stored) if "." in stored else (_verify_mongo_session(stored) if _mongo_enabled() else None)
-            if payload:
-                st.session_state["auth_ok"] = True
-                st.session_state["auth_user_id"] = payload.get("uid")
-                # client_instance_id is used elsewhere; keep stable once authenticated
-                st.session_state["client_instance_id"] = st.session_state.get("client_instance_id") or uuid4().hex[:10]
-
     qp = _qp_get()
     if "logout" in qp:
         _logout_and_clear()
 
+    # 1) 이미 인증된 경우: 토큰을 localStorage에 보관해서 새로고침 복구를 보장
     if is_authenticated():
         u = get_current_user() or {}
         if u and (u.get("active") is False):
             st.session_state.pop("auth_ok", None)
             st.session_state.pop("auth_user_id", None)
+            st.session_state.pop("_auth_token", None)
         else:
-            # Persist a session token in browser localStorage so refresh works even if URL params can't be updated.
-            uid = st.session_state.get("auth_user_id") or ""
-            if uid:
-                # If URL already has auth, store it; otherwise ensure we have a valid Mongo session id stored.
-                if "auth" in qp:
-                    tok = qp.get("auth")
-                    if isinstance(tok, list):
-                        tok = tok[0] if tok else ""
-                    if isinstance(tok, str) and tok:
-                        ls_set(LS_AUTH_KEY, tok)
-                else:
-                    cur = ls_get(LS_AUTH_KEY, default="")
-                    ok = False
-                    if isinstance(cur, str) and cur:
-                        if "." in cur:
-                            p = _verify_auth_token(cur)
-                            ok = bool(p and (p.get("uid") == uid))
-                        else:
-                            p = _verify_mongo_session(cur) if _mongo_enabled() else None
-                            ok = bool(p and (p.get("uid") == uid))
-                    if not ok:
-                        tok = _create_mongo_session(uid) if _mongo_enabled() else None
-                        if not tok:
-                            tok = _make_auth_token(uid)
-                        if tok:
-                            ls_set(LS_AUTH_KEY, tok)
+            tok = _get_persisted_token(qp)
+            if not tok:
+                uid = st.session_state["auth_user_id"]
+                tok = _create_mongo_session(uid) if _mongo_enabled() else None
+                if not tok:
+                    tok = _make_auth_token(uid)
+            st.session_state["_auth_token"] = tok
+            _ls_set_item(_AUTH_LS_KEY, tok)
             return
 
-    token = None
-    try:
-        if "auth" in qp:
-            token = qp.get("auth")
-            if isinstance(token, list): token = token[0] if token else None
-    except Exception: token = None
-
-    token_str = str(token or "")
+    # 2) 미인증인 경우: URL auth가 없더라도 localStorage 토큰으로 복구 시도
+    token_str = _get_persisted_token(qp)
     payload = _verify_auth_token(token_str) if "." in token_str else _verify_mongo_session(token_str)
     if payload:
         uid = payload["uid"]
@@ -1283,15 +1270,14 @@ def require_auth():
         if rec and (rec.get("active") is not False):
             st.session_state["auth_ok"] = True
             st.session_state["auth_user_id"] = uid
-            try:
-                if token: ls_set(LS_AUTH_KEY, str(token))
-            except Exception:
-                pass
             st.session_state["auth_role"] = rec.get("role", "user")
             st.session_state["auth_display_name"] = rec.get("display_name", uid)
             st.session_state["client_instance_id"] = st.session_state.get("client_instance_id") or uuid4().hex[:10]
+            st.session_state["_auth_token"] = token_str
+            _ls_set_item(_AUTH_LS_KEY, token_str)
             return
 
+    # 3) 로그인 UI
     c1, c2, c3 = st.columns([1.0, 1.5, 1.0])
     with c2:
         st.markdown("<div style='height:10vh;'></div>", unsafe_allow_html=True)
@@ -1327,23 +1313,19 @@ def require_auth():
 
             st.session_state["auth_ok"] = True
             st.session_state["auth_user_id"] = uid
-            try:
-                if token: ls_set(LS_AUTH_KEY, str(token))
-            except Exception:
-                pass
             st.session_state["auth_role"] = rec.get("role", "user")
             st.session_state["auth_display_name"] = rec.get("display_name", uid)
             st.session_state["client_instance_id"] = st.session_state.get("client_instance_id") or uuid4().hex[:10]
 
             tok = _create_mongo_session(uid) if _mongo_enabled() else None
-
             if not tok:
                 tok = _make_auth_token(uid)
 
-            if tok:
-                ls_set(LS_AUTH_KEY, tok)
+            st.session_state["_auth_token"] = tok
+            _ls_set_item(_AUTH_LS_KEY, tok)
+
+            # URL은 건드리지 않음 (query param 없이도 localStorage로 새로고침 유지)
             st.rerun()
-            return
 
     st.stop()
 # endregion

@@ -19,3 +19,4 @@ requests
 reportlab   
 pymongo
 dnspython
+streamlit-js-eval==1.0.0
