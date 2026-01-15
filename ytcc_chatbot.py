@@ -1968,11 +1968,15 @@ def call_gemini_smart_cache(model_name, keys, system_instruction, user_query,
             current_key = rk.current()
             genai.configure(api_key=current_key)
             try:
+                # [수정 부분 시작] system_instruction이 빈 문자열이면 None으로 처리
+                real_sys_inst = system_instruction if (system_instruction and system_instruction.strip()) else None
+                # [수정 부분 끝]
+
                 with GeminiInflightSlot():
                     active_cache = caching.CachedContent.create(
                         model=model_name,
                         display_name=f"ytcc_{uuid4().hex[:8]}",
-                        system_instruction=system_instruction,
+                        system_instruction=real_sys_inst,  # 수정된 변수 사용
                         contents=[large_context_text],
                         ttl=timedelta(minutes=CACHE_TTL_MINUTES)
                     )
