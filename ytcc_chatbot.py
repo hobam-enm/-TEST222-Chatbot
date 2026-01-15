@@ -340,9 +340,6 @@ ensure_state()
 
 # region [MongoDB Integration: Sync & Load]
 # ==========================================
-# (Refactored) MongoDB 직접 검색 및 카운트
-# 전체 로드 방식을 폐기하고, 필요한 검색과 카운트만 수행합니다.
-# ==========================================
 
 @st.cache_resource
 def init_mongo():
@@ -407,6 +404,33 @@ def search_pgc_data(keywords: list, start_dt: datetime, end_dt: datetime):
     except Exception as e:
         print(f"Search Error: {e}")
         return []
+    
+def log_search_history(user_query: str, schema: dict):
+    """
+    [NEW] 사용자의 검색 이력(누가, 무엇을, 언제)을 DB에 저장합니다.
+    에러가 나더라도 분석 흐름을 방해하지 않도록 try-except 처리했습니다.
+    """
+    try:
+        client = init_mongo()
+        if not client: return
+        
+        db = client.get_database("yt_dashboard")
+        col = db.get_collection("search_logs") # 'search_logs' 컬렉션 자동 생성됨
+        
+        user_id = st.session_state.get("auth_user_id") or "public"
+        
+        log_doc = {
+            "user_id": user_id,
+            "raw_query": user_query,              # 사용자가 입력한 원본 질문
+            "keywords": schema.get("keywords", []), # AI가 추출한 핵심 키워드
+            "range_start": schema.get("start_iso"),
+            "range_end": schema.get("end_iso"),
+            "timestamp": datetime.utcnow()        # 검색 시점 (UTC)
+        }
+        col.insert_one(log_doc)
+    except Exception as e:
+        print(f"Log Error: {e}")
+
 # endregion
 
 
@@ -2281,6 +2305,7 @@ def run_pipeline_first_turn(user_query: str, extra_video_ids=None, only_these_vi
     light = call_gemini_rotating(GEMINI_MODEL, GEMINI_API_KEYS, "", LIGHT_PROMPT.replace("{USER_QUERY}", user_query))
     schema = parse_light_block_to_schema(light)
     st.session_state["last_schema"] = schema
+    log_search_history(user_query, schema)
 
     prog_bar.progress(0.10, text="영상 수집중…")
     if not YT_API_KEYS: return "오류: YouTube API Key가 설정되지 않았습니다."
