@@ -340,7 +340,8 @@ ensure_state()
 
 # region [MongoDB Integration: Sync & Load]
 # ==========================================
-# 몽고DB에 저장한 데이터를 읽어옵니다.
+# (Refactored) MongoDB 직접 검색 및 카운트
+# 전체 로드 방식을 폐기하고, 필요한 검색과 카운트만 수행합니다.
 # ==========================================
 
 @st.cache_resource
@@ -349,130 +350,63 @@ def init_mongo():
     try:
         if "mongo" not in st.secrets: return None
         uri = st.secrets["mongo"]["uri"]
-        # certifi: SSL 인증서 오류 방지용
         return MongoClient(uri, tlsCAFile=certifi.where())
     except Exception as e:
         print(f"MongoDB Init Error: {e}")
         return None
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def load_from_mongodb(file_name):
+def _dt_to_utc_iso_string(dt: datetime) -> str:
+    if not dt: return ""
+    if dt.tzinfo is None: dt = dt.replace(tzinfo=KST)
+    return dt.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+def get_total_pgc_count():
+    """
+    [NEW] DB에 저장된 전체 영상 개수만 빠르게 조회합니다. (메모리 부하 없음)
+    """
+    client = init_mongo()
+    if not client: return 0
     try:
-        client = init_mongo()
-        if not client: return []
-        
         db = client.get_database("yt_dashboard")
         col = db.get_collection("videos")
-        
-        # source_file이 일치하는 문서 검색 (_id 필드는 제외하고 가져옴)
-        cursor = col.find({"source_file": file_name}, {"_id": 0, "source_file": 0})
-        return list(cursor)
+        # count_documents({})는 데이터를 로드하지 않고 메타데이터만 확인하므로 매우 빠르고 가볍습니다.
+        return col.count_documents({})
+    except Exception:
+        return 0
 
-    except Exception as e:
-        print(f"Load Error: {e}")
-        return []
-
-# 전역 타임스탬프 추적기 (새로고침 해도 유지)
-@st.cache_resource
-def get_global_time_tracker():
-    return {}
-
-def get_all_pgc_data():
+def search_pgc_data(keywords: list, start_dt: datetime, end_dt: datetime):
     """
-    몽고DB에 있는 '모든' 수집 데이터를 가져옵니다. (자사 IP 모드용)
-    metadata 컬렉션을 확인하여 변경사항이 있을 때만 캐시를 갱신합니다.
+    MongoDB에서 기간과 키워드에 매칭되는 영상 데이터만 검색하여 가져옵니다.
     """
     client = init_mongo()
     if not client: return []
 
-    all_pgc_videos = []
-    
     try:
         db = client.get_database("yt_dashboard")
-        meta_col = db.get_collection("metadata")
+        col = db.get_collection("videos")
         
-        # 1. 메타데이터(업데이트 시간) 전체 조회
-        #    문서 구조: {"_id": "cache_token_xxx.json", "updated_at": ..., "count": ...}
-        docs = meta_col.find({})
-        
-        tracker = get_global_time_tracker()
-        need_refresh = False
-        file_list = []
-
-        for doc in docs:
-            file_name = doc["_id"]
-            updated_at = doc.get("updated_at")
+        date_query = {}
+        if start_dt: date_query["$gte"] = _dt_to_utc_iso_string(start_dt)
+        if end_dt: date_query["$lte"] = _dt_to_utc_iso_string(end_dt)
             
-            file_list.append(file_name)
-            
-            # 타임스탬프 비교
-            current_ts_str = str(updated_at) if updated_at else "none"
-            last_ts_str = tracker.get(file_name)
-            
-            if last_ts_str != current_ts_str:
-                need_refresh = True
-                tracker[file_name] = current_ts_str
+        keyword_conditions = []
+        if keywords:
+            for kw in keywords:
+                if not kw.strip(): continue
+                safe_kw = re.escape(kw.strip())
+                keyword_conditions.append({"title": {"$regex": safe_kw, "$options": "i"}})
+                keyword_conditions.append({"description": {"$regex": safe_kw, "$options": "i"}})
         
-        # 2. 변경사항 있으면 캐시 비우기
-        if need_refresh:
-            load_from_mongodb.clear()
-        
-        # 3. 데이터 로드 (캐시 활용)
-        for f_name in file_list:
-            vids = load_from_mongodb(f_name)
-            all_pgc_videos.extend(vids)
+        final_query = {}
+        if date_query: final_query["date"] = date_query
+        if keyword_conditions: final_query["$or"] = keyword_conditions
+            
+        cursor = col.find(final_query, {"_id": 0, "id": 1, "title": 1, "date": 1})
+        return list(cursor)
 
     except Exception as e:
-        print(f"Sync Error: {e}")
+        print(f"Search Error: {e}")
         return []
-        
-    return all_pgc_videos
-
-def _extract_vid_from_item(obj):
-    # 몽고DB 문서는 'id', 'title', 'date' 등의 필드를 가짐
-    vid = obj.get("id") or obj.get("videoId")
-    title = obj.get("title", "")
-    desc = obj.get("description", "")
-    pub_at = obj.get("date") or obj.get("publishedAt") 
-    return vid, title, desc, pub_at
-
-def normalize_text_for_search(text: str) -> str:
-    if not text: return ""
-    return re.sub(r'[^a-zA-Z0-9가-힣]', '', text).lower()
-
-def filter_pgc_data_by_keyword(all_data, keyword, start_dt=None, end_dt=None):
-    if not keyword or not all_data: return []
-    
-    kw_norm = normalize_text_for_search(keyword)
-    matched_ids = []
-    
-    for item in all_data:
-        vid, title, desc, pub_str = _extract_vid_from_item(item)
-        if not vid: continue
-        
-        # 날짜 필터
-        if (start_dt or end_dt) and pub_str:
-            try:
-                # 몽고DB date 필드가 이미 datetime 객체일 수도 있고 문자열일 수도 있음
-                if isinstance(pub_str, datetime):
-                    pub_dt = pub_str
-                else:
-                    pub_dt = datetime.fromisoformat(str(pub_str).replace("Z", "+00:00"))
-                
-                # 타임존 보정 (KST 기준 비교를 위해 naive로 변환하거나 tz 맞춤)
-                if pub_dt.tzinfo:
-                    pub_dt = pub_dt.astimezone(timezone(timedelta(hours=9)))
-                
-                # 비교 (start_dt, end_dt는 이미 KST aware라고 가정)
-                if start_dt and pub_dt < start_dt: continue
-                if end_dt and pub_dt > end_dt: continue
-            except: pass
-            
-        # 키워드 필터
-        if kw_norm in normalize_text_for_search(title) or kw_norm in normalize_text_for_search(desc):
-            matched_ids.append(vid)
-            
-    return list(dict.fromkeys(matched_ids))
 # endregion
 
 
@@ -2339,27 +2273,26 @@ def run_pipeline_first_turn(user_query: str, extra_video_ids=None, only_these_vi
     own_mode = bool(st.session_state.get("own_ip_mode", False))
     pgc_ids = []
     
-    # [수정] 자사 IP 모드 - 파이어베이스 연동 로직 적용
+    # [수정됨] 자사 IP 모드 - DB 직접 검색 (메모리 최적화)
     if own_mode:
-        # 1. 최신 데이터 동기화 및 로드 (메모리)
-        all_pgc_data = get_all_pgc_data()
+        # 키워드와 기간을 DB로 보내서 필요한 데이터만 받아옵니다.
+        pgc_data = search_pgc_data(kw_main, start_dt, end_dt)
         
-        if not all_pgc_data:
-            # st.warning("자사 IP 데이터를 불러올 수 없습니다 (Firebase 연동 확인 필요)")
-            pass
+        if pgc_data:
+            # 검색된 결과에서 'id' 필드만 추출
+            pgc_ids = [item.get("id") for item in pgc_data if item.get("id")]
+            pgc_ids = list(dict.fromkeys(pgc_ids)) # 중복 제거
+            # (선택사항) 디버깅용: 검색된 개수 출력
+            print(f"DEBUG: 자사 IP 검색 결과 {len(pgc_ids)}건")
         else:
-            # 2. 메모리 상에서 필터링
-            for base_kw in (kw_main or []):
-                matched_ids = filter_pgc_data_by_keyword(all_pgc_data, base_kw, start_dt, end_dt)
-                pgc_ids.extend(matched_ids)
-            
-        pgc_ids = list(dict.fromkeys(pgc_ids))
+            # 검색 결과가 없으면 그냥 빈 리스트
+            pass
 
     if only_these_videos and extra_video_ids:
         all_ids = extra_video_ids
     else:
         all_ids = []
-        # UGC 검색
+        # UGC 검색 (유튜브 API)
         for base_kw in (kw_main or ["유튜브"]):
             from urllib.parse import quote
             clean_kw = base_kw.replace(" ", "")
@@ -2370,7 +2303,7 @@ def run_pipeline_first_turn(user_query: str, extra_video_ids=None, only_these_vi
         if extra_video_ids:
             all_ids.extend(extra_video_ids)
             
-        # PGC 아이디 합치기
+        # PGC(자사 IP) 아이디 합치기
         if own_mode and pgc_ids:
             all_ids.extend(pgc_ids)
 
@@ -2379,6 +2312,7 @@ def run_pipeline_first_turn(user_query: str, extra_video_ids=None, only_these_vi
 
     df_stats = pd.DataFrame(yt_video_statistics(rt, all_ids))
     
+    # OST 제외 필터 (제목 기준)
     if bool(st.session_state.get("own_ip_mode", False)) and (not df_stats.empty) and ("title" in df_stats.columns):
         df_stats = df_stats[~df_stats["title"].astype(str).str.contains(r"\bOST\b", case=False, na=False)]
     
@@ -2407,9 +2341,7 @@ def run_pipeline_first_turn(user_query: str, extra_video_ids=None, only_these_vi
 
     used_top = sample_meta.get("used_top", 0)
     used_random = sample_meta.get("used_random", 0)
-    max_per = sample_meta.get("max_chars_per_comment", 0)
-    max_total = sample_meta.get("max_total_chars", 0)
-
+    
     analysis_scope_line = (
         f"{sample_cnt:,}개 (추출: 인기댓글 {used_top:,}개 + 랜덤 {used_random:,}개, "
     )
@@ -2645,20 +2577,21 @@ if not st.session_state.chat:
         cur_toggle = bool(st.session_state.get("own_ip_mode", False))
         prev_toggle = st.session_state.get("own_ip_toggle_prev", None)
         
-        # [수정] 자사 IP 모드 토글 시 상태 확인
+        # [수정됨] 토글 켰을 때 전체 데이터 로드(OOM 위험) 대신 개수만 확인(안전)
         if cur_toggle and (prev_toggle is None or prev_toggle is False):
-            with st.spinner("데이터 동기화 중..."):
-                all_data = get_all_pgc_data()
-                if all_data:
-                    st.success(f"데이터 동기화 완료 ({len(all_data):,}개 영상)")
+            with st.spinner("데이터베이스 확인 중..."):
+                # 이제 여기서 무거운 데이터를 가져오지 않고 숫자만 가져옵니다.
+                total_cnt = get_total_pgc_count()
+                
+                if total_cnt > 0:
+                    st.success(f"자사 IP 데이터 연동됨 ({total_cnt:,}개)")
                 else:
-                    st.warning("데이터가 없거나 로드에 실패했습니다.")
+                    st.warning("데이터가 없거나 DB 연결 실패")
+                    
         st.session_state["own_ip_toggle_prev"] = cur_toggle
 
 else:
     render_metadata_and_downloads()
-    render_chat()
-    scroll_to_bottom()
 
 
 if prompt := st.chat_input("질문을 입력하거나 영상 URL을 붙여넣으세요..."):
