@@ -1305,7 +1305,7 @@ def require_auth():
         st.markdown(
             """
             <div style="text-align:center;">
-              <div class="ytcc-login-title">💬 유튜브 댓글분석 AI</div>
+              <div class="ytcc-login-title">💬 유튜브 댓글분석 AI챗봇</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -2017,9 +2017,28 @@ def yt_video_statistics(rt, video_ids):
         resp = rt.execute(lambda s: s.videos().list(part="statistics,snippet,contentDetails", id=",".join(batch)))
         for item in resp.get("items", []):
             stats, snip, cont = item.get("statistics", {}), item.get("snippet", {}), item.get("contentDetails", {})
+            
+            # 1. Duration 변환 (ISO -> 초 -> MM:SS)
             dur = cont.get("duration", "")
             h, m, s = re.search(r"(\d+)H", dur), re.search(r"(\d+)M", dur), re.search(r"(\d+)S", dur)
             dur_sec = (int(h.group(1))*3600 if h else 0) + (int(m.group(1))*60 if m else 0) + (int(s.group(1)) if s else 0)
+            
+            if dur_sec >= 3600:
+                dur_fmt = f"{dur_sec // 3600}:{(dur_sec % 3600) // 60:02}:{dur_sec % 60:02}"
+            else:
+                dur_fmt = f"{dur_sec // 60}:{dur_sec % 60:02}"
+
+            # 2. PublishedAt 변환 (UTC -> KST 문자열)
+            pub_raw = snip.get("publishedAt", "")
+            pub_kst = pub_raw
+            if pub_raw:
+                try:
+                    # 'Z'를 '+00:00'으로 바꿔서 파싱 후 KST로 변환
+                    dt = datetime.fromisoformat(pub_raw.replace("Z", "+00:00"))
+                    dt = dt.astimezone(KST)
+                    pub_kst = dt.strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    pub_kst = pub_raw
 
             vid_id = item.get("id")
             rows.append({
@@ -2027,8 +2046,8 @@ def yt_video_statistics(rt, video_ids):
                 "video_url": f"https://www.youtube.com/watch?v={vid_id}",
                 "title": snip.get("title", ""),
                 "channelTitle": snip.get("channelTitle", ""),
-                "publishedAt": snip.get("publishedAt", ""),
-                "duration": dur,
+                "publishedAt": pub_kst,   # [수정됨] KST 적용
+                "duration": dur_fmt,      # [수정됨] MM:SS 적용
                 "shortType": "Shorts" if dur_sec <= 60 else "Clip",
                 "viewCount": int(stats.get("viewCount", 0) or 0),
                 "likeCount": int(stats.get("likeCount", 0) or 0),
@@ -2538,7 +2557,7 @@ if not st.session_state.chat:
         """
 <div style="display:flex; flex-direction:column; align-items:center; justify-content:center;
             text-align:center; padding-top:8vh;">
-  <div class="ytcc-main-title">유튜브 댓글분석 AI</div>
+  <div class="ytcc-main-title">유튜브 댓글분석 AI 챗봇</div>
   <p style="font-size:1.1rem; color:#6b7280; max-width:600px; margin-top:10px; margin-bottom: 2rem;">
     유튜브 여론이 궁금한 드라마에 대해 대화형식으로 물어보세요<br>
     유튜브 댓글 기반의 시청자 반응을 AI가 분석해줍니다.
