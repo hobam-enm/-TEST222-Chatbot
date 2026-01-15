@@ -2592,6 +2592,7 @@ if not st.session_state.chat:
 
 else:
     render_metadata_and_downloads()
+    render_chat()
 
 
 if prompt := st.chat_input("질문을 입력하거나 영상 URL을 붙여넣으세요..."):
