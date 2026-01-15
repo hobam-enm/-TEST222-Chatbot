@@ -1476,143 +1476,78 @@ class RotatingYouTube:
 # endregion
 
 
-# region [GitHub & Session Management]
-def _gh_headers(token: str):
-    auth = f"Bearer {token}" if token else ""
-    return {
-        "Authorization": auth,
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "ytcc-chatbot"
-    }
+# region [DB & Session Management]
 
-def github_upload_file(repo, branch, path_in_repo, local_path, token):
-    url = f"https://api.github.com/repos/{repo}/contents/{path_in_repo}"
-    with open(local_path, "rb") as f:
-        content = base64.b64encode(f.read()).decode()
-
-    headers = _gh_headers(token)
-    get_resp = requests.get(url + f"?ref={branch}", headers=headers)
-    sha = get_resp.json().get("sha") if get_resp.ok else None
-
-    data = {
-        "message": f"archive: {os.path.basename(path_in_repo)}",
-        "content": content,
-        "branch": branch
-    }
-    if sha:
-        data["sha"] = sha
-
-    resp = requests.put(url, headers=headers, json=data)
-    resp.raise_for_status()
-    return resp.json()
-
-
-
-def github_list_dir(repo, branch, path, token):
-    # Mongo-backed listing for saved sessions when path starts with "sessions/".
+def db_list_sessions(user_id: str):
+    """
+    MongoDB에서 해당 사용자의 세션 목록을 가져옵니다.
+    """
     try:
-        if _mongo_enabled() and isinstance(path, str) and path.startswith("sessions/"):
-            parts = path.split("/")
-            # sessions/{user_id}
-            user_id = parts[1] if len(parts) >= 2 else "public"
-            coll = _mongo_saved_sessions_coll()
-            if coll is None:
-                return []
-            cur = coll.find({"user_id": user_id}, {"sess_name": 1, "updated_at": 1})
-            # sort by updated_at desc if possible
-            rows = list(cur)
-            rows.sort(key=lambda d: d.get("updated_at") or "", reverse=True)
-            return [d.get("sess_name") for d in rows if d.get("sess_name")]
-    except Exception:
-        pass
-    # fallback to GitHub listing (legacy)
-    url = f"https://api.github.com/repos/{repo}/contents/{path}?ref={branch}"
-    r = requests.get(url, headers=_gh_headers(token))
-    if not r.ok:
-        return []
-    out = []
-    for item in r.json():
-        if item.get("type") == "dir":
-            out.append(item.get("name"))
-    return out
-
-def github_download_file(repo, branch, path_in_repo, token, local_path):
-    url = f"https://api.github.com/repos/{repo}/contents/{path_in_repo}?ref={branch}"
-    resp = requests.get(url, headers=_gh_headers(token))
-    if resp.ok:
-        os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        with open(local_path, "wb") as f:
-            f.write(base64.b64decode(resp.json()["content"]))
-        return True
-    return False
-
-
-def github_delete_folder(repo, branch, folder_path, token):
-    # Mongo-backed delete for saved sessions when path starts with "sessions/".
-    try:
-        if _mongo_enabled() and isinstance(folder_path, str) and folder_path.startswith("sessions/"):
-            # sessions/{user_id}/{sess_name}
-            parts = folder_path.split("/")
-            if len(parts) >= 3:
-                user_id = parts[1]
-                sess_name = parts[2]
-                coll = _mongo_saved_sessions_coll()
-                if coll is None:
-                    return
-                coll.delete_one({"_id": f"{user_id}/{sess_name}"})
-                return
-    except Exception:
-        pass
-
-    # fallback to GitHub delete (legacy)
-    contents_url = f"https://api.github.com/repos/{repo}/contents/{folder_path}?ref={branch}"
-    headers = _gh_headers(token)
-    resp = requests.get(contents_url, headers=headers)
-    if not resp.ok:
-        return
-    for item in resp.json():
-        delete_url = f"https://api.github.com/repos/{repo}/contents/{item['path']}"
-        data = {"message": f"delete: {item['name']}", "sha": item['sha'], "branch": branch}
-        requests.delete(delete_url, headers=headers, json=data).raise_for_status()
-
-
-def github_rename_session(user_id: str, old_name: str, new_name: str, token):
-    # Mongo-backed rename for saved sessions.
-    if _mongo_enabled():
+        if not _mongo_enabled():
+            return []
+            
         coll = _mongo_saved_sessions_coll()
         if coll is None:
-            raise Exception("Mongo 연결 실패")
-        old_id = f"{user_id}/{old_name}"
-        new_id = f"{user_id}/{new_name}"
-        if coll.find_one({"_id": new_id}):
-            raise Exception("동일한 세션명이 이미 존재합니다.")
-        doc = coll.find_one({"_id": old_id})
-        if not doc:
-            raise Exception("기존 세션을 찾을 수 없습니다.")
-        doc["_id"] = new_id
-        doc["sess_name"] = new_name
-        now = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
-        doc["updated_at"] = now
-        # insert new, delete old
-        coll.insert_one(doc)
-        coll.delete_one({"_id": old_id})
+            return []
+            
+        # updated_at 내림차순 정렬 (최신순)
+        cur = coll.find({"user_id": user_id}, {"sess_name": 1, "updated_at": 1})
+        rows = list(cur)
+        rows.sort(key=lambda d: d.get("updated_at") or "", reverse=True)
+        
+        return [d.get("sess_name") for d in rows if d.get("sess_name")]
+    except Exception as e:
+        print(f"List Sessions Error: {e}")
+        return []
+
+def db_delete_session(user_id: str, sess_name: str):
+    """
+    MongoDB에서 특정 세션을 삭제합니다.
+    """
+    try:
+        if not _mongo_enabled():
+            return
+            
+        coll = _mongo_saved_sessions_coll()
+        if coll is None:
+            return
+        
+        # _id가 "{user_id}/{sess_name}" 형식
+        coll.delete_one({"_id": f"{user_id}/{sess_name}"})
+    except Exception as e:
+        print(f"Delete Session Error: {e}")
+
+def db_rename_session(user_id: str, old_name: str, new_name: str):
+    """
+    MongoDB에서 세션 이름을 변경합니다. (Insert & Delete)
+    """
+    if not _mongo_enabled():
         return
 
-    # fallback legacy (GitHub)
-    contents_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/sessions/{user_id}/{old_name}?ref={GITHUB_BRANCH}"
-    resp = requests.get(contents_url, headers=_gh_headers(token))
-    resp.raise_for_status()
-    files_to_move = resp.json()
+    coll = _mongo_saved_sessions_coll()
+    if coll is None:
+        raise Exception("Mongo 연결 실패")
 
-    for item in files_to_move:
-        filename = item['name']
-        local_path = os.path.join(SESS_DIR, filename)
-        if not github_download_file(GITHUB_REPO, GITHUB_BRANCH, item['path'], token, local_path):
-            raise Exception(f"Failed to download {filename} from {old_name}")
-        github_upload_file(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{new_name}/{filename}", local_path, token)
+    old_id = f"{user_id}/{old_name}"
+    new_id = f"{user_id}/{new_name}"
 
-    github_delete_folder(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{old_name}", token)
+    if coll.find_one({"_id": new_id}):
+        raise Exception("동일한 세션명이 이미 존재합니다.")
+
+    doc = coll.find_one({"_id": old_id})
+    if not doc:
+        raise Exception("기존 세션을 찾을 수 없습니다.")
+
+    # 새 ID 및 이름으로 업데이트
+    doc["_id"] = new_id
+    doc["sess_name"] = new_name
+    
+    now = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
+    doc["updated_at"] = now
+    
+    # 새 문서 삽입 후 기존 문서 삭제 (MongoDB _id 변경 불가 제약)
+    coll.insert_one(doc)
+    coll.delete_one({"_id": old_id})
 
 def _session_base_keyword() -> str:
     schema = st.session_state.get("last_schema", {}) or {}
@@ -1624,9 +1559,7 @@ def _session_base_keyword() -> str:
 
 def _next_session_number(user_id: str, base: str) -> int:
     try:
-        if not all([GITHUB_TOKEN, GITHUB_REPO]):
-            return 1
-        sessions = github_list_dir(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}", GITHUB_TOKEN) or []
+        sessions = db_list_sessions(user_id) or []
     except Exception:
         sessions = []
 
@@ -1651,11 +1584,10 @@ def _build_session_name() -> str:
     return f"{base}{n}"
 
 
-
-def save_current_session_to_github():
-    # NOTE: kept function name for UI compatibility.
-    # MongoDB-only: stores qa.json + comments.csv (+ videos.csv) in Mongo (compressed) and also
-    # recreates local files on load so downstream logic remains identical.
+def save_current_session_to_db():
+    """
+    현재 세션을 MongoDB에 저장합니다.
+    """
     if not (_mongo_enabled() and st.session_state.get("chat") and st.session_state.get("last_csv")):
         return False, "저장할 데이터가 없거나 Mongo 설정이 누락되었습니다."
 
@@ -1665,38 +1597,49 @@ def save_current_session_to_github():
 
     sess_name = _build_session_name()
     user_id = st.session_state.get("auth_user_id") or "public"
+    
+    # 로컬 파일 시스템에도 캐싱 (다운로드 기능 및 빠른 로드용)
     local_dir = os.path.join(SESS_DIR, user_id, sess_name)
     os.makedirs(local_dir, exist_ok=True)
 
     try:
-        # 1) meta (qa.json)
+        # 1) meta (qa.json) 준비
         meta_data = {
             "chat": st.session_state.chat,
             "last_schema": st.session_state.get("last_schema"),
             "sample_text": st.session_state.get("sample_text"),
         }
+        
+        # 로컬 저장 (qa.json)
         meta_path = os.path.join(local_dir, "qa.json")
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(meta_data, f, ensure_ascii=False, indent=2)
 
-        # 2) comments.csv (required)
+        # 2) comments.csv 준비
         comments_src = st.session_state.last_csv
         comments_path = os.path.join(local_dir, "comments.csv")
-        # keep local copy for identical behavior
+        
+        # 로컬 복사
         try:
-            os.system(f'cp "{comments_src}" "{comments_path}"')
+            if comments_src != comments_path:
+                with open(comments_src, "rb") as f_src:
+                    with open(comments_path, "wb") as f_dst:
+                        f_dst.write(f_src.read())
         except Exception:
             pass
 
+        # DB 저장을 위해 읽기
         with open(comments_src, "rb") as f:
             comments_raw = f.read()
 
-        # 3) videos.csv (optional)
+        # 3) videos.csv (optional) 준비
         videos_b64gz = ""
         videos_bytes = b""
         videos_path = os.path.join(local_dir, "videos.csv")
+        
         if st.session_state.get("last_df") is not None:
             try:
+                # 로컬 저장
                 st.session_state.last_df.to_csv(videos_path, index=False, encoding="utf-8-sig")
                 with open(videos_path, "rb") as f:
                     videos_bytes = f.read()
@@ -1704,9 +1647,10 @@ def save_current_session_to_github():
             except Exception:
                 videos_b64gz = ""
 
+        # 4) MongoDB Update (Upsert)
         now = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
-
         doc_id = f"{user_id}/{sess_name}"
+        
         update = {
             "$set": {
                 "user_id": user_id,
@@ -1729,8 +1673,10 @@ def save_current_session_to_github():
         return False, f"저장 실패: {e}"
 
 
-def load_session_from_github(sess_name: str):
-    # NOTE: kept function name for UI compatibility. MongoDB-only.
+def load_session_from_db(sess_name: str):
+    """
+    MongoDB에서 세션을 불러옵니다.
+    """
     user_id = st.session_state.get("auth_user_id") or "public"
     coll = _mongo_saved_sessions_coll()
     if coll is None:
@@ -1738,6 +1684,7 @@ def load_session_from_github(sess_name: str):
         return
 
     doc_id = f"{user_id}/{sess_name}"
+    
     with st.spinner(f"세션 '{sess_name}' 불러오는 중..."):
         try:
             doc = coll.find_one({"_id": doc_id})
@@ -1750,26 +1697,25 @@ def load_session_from_github(sess_name: str):
                 st.error("세션 핵심 데이터가 손상되었거나 누락되었습니다.")
                 return
 
+            # 로컬 파일 시스템 복원
             local_dir = os.path.join(SESS_DIR, user_id, sess_name)
             os.makedirs(local_dir, exist_ok=True)
 
-            # reset chat but keep auth
+            # 1) State 복원
             _reset_chat_only(keep_auth=True)
-
-            # restore meta
             st.session_state.chat = meta.get("chat") or []
             st.session_state.last_schema = meta.get("last_schema") or {}
             st.session_state.sample_text = meta.get("sample_text") or ""
             st.session_state.loaded_session_name = sess_name
 
-            # restore comments.csv to local file and point last_csv to it
+            # 2) comments.csv 복원
             comments_bytes = _ungzip_b64_to_bytes(doc.get("comments_b64gz") or "")
             comments_path = os.path.join(local_dir, "comments.csv")
             with open(comments_path, "wb") as f:
                 f.write(comments_bytes)
             st.session_state.last_csv = comments_path
 
-            # restore videos.csv if present
+            # 3) videos.csv 복원
             videos_b64gz = doc.get("videos_b64gz") or ""
             if videos_b64gz:
                 videos_bytes = _ungzip_b64_to_bytes(videos_b64gz)
@@ -1785,6 +1731,7 @@ def load_session_from_github(sess_name: str):
 
         except Exception as e:
             st.error(f"세션 로드 실패: {e}")
+# endregion
 
 
 
@@ -1807,7 +1754,8 @@ def _process_saved_session_actions():
             st.warning("새 이름이 비어있습니다.")
         else:
             try:
-                github_rename_session(user_id, old_name, new_name, None)
+                # [수정됨] github_rename_session -> db_rename_session
+                db_rename_session(user_id, old_name, new_name)
                 # update loaded marker if needed
                 if st.session_state.get("loaded_session_name") == old_name:
                     st.session_state.loaded_session_name = new_name
@@ -1820,7 +1768,8 @@ def _process_saved_session_actions():
         sess = st.session_state.session_to_delete
         st.session_state.pop("session_to_delete", None)
         try:
-            github_delete_folder(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}/{sess}", None)
+            # [수정됨] github_delete_folder -> db_delete_session
+            db_delete_session(user_id, sess)
             # if currently loaded session deleted, clear chat (keep auth)
             if st.session_state.get("loaded_session_name") == sess:
                 st.session_state.pop("loaded_session_name", None)
@@ -1832,10 +1781,11 @@ def _process_saved_session_actions():
     if st.session_state.get("session_to_load"):
         sess = st.session_state.session_to_load
         st.session_state.pop("session_to_load", None)
-        load_session_from_github(sess)
-        # load_session_from_github sets session_state; rerun to redraw UI with loaded chat
+        # [수정됨] load_session_from_github -> load_session_from_db
+        load_session_from_db(sess)
         st.rerun()
 # endregion
+
 def serialize_comments_for_llm_from_file(csv_path: str,
                                          max_chars_per_comment=280,
                                          max_total_chars=420_000,
@@ -2580,7 +2530,8 @@ with st.sidebar:
             if st.button("세션 저장", use_container_width=True, disabled=not has_data):
                 if has_data:
                     with st.spinner("저장..."):
-                        success, result = save_current_session_to_github()
+                        # [수정됨] save_current_session_to_github -> save_current_session_to_db
+                        success, result = save_current_session_to_db()
                     if success:
                         st.success("완료")
                         time.sleep(1)
@@ -2601,7 +2552,9 @@ with st.sidebar:
         try:
             user_id = st.session_state.get("auth_user_id") or "public"
             _process_saved_session_actions()
-            sessions = sorted(github_list_dir(GITHUB_REPO, GITHUB_BRANCH, f"sessions/{user_id}", GITHUB_TOKEN), reverse=True)
+            
+            # [수정됨] github_list_dir -> db_list_sessions (인자 대폭 간소화)
+            sessions = db_list_sessions(user_id)
             
             if not sessions: 
                 st.caption("기록 없음")
@@ -2638,8 +2591,8 @@ with st.sidebar:
                                         st.session_state.session_to_delete = sess
                                         st.rerun()
                             st.markdown('</div>', unsafe_allow_html=True)
-        except Exception: 
-            st.error("Error")
+        except Exception as e: 
+            st.error(f"Error: {e}")
             
     st.markdown("""
         <div style="margin-top:auto; padding-top:1rem; font-size:0.9rem; color:#6b7280; text-align:center;">
