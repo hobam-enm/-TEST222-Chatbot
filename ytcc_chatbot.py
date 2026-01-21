@@ -49,12 +49,21 @@ FIRST_TURN_PROMPT_FILE = "1차 질문 프롬프트.md"
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def load_first_turn_system_prompt() -> str:
-    if not os.path.exists(FIRST_TURN_PROMPT_FILE):
-        raise RuntimeError(f"프롬프트 파일이 없습니다: {FIRST_TURN_PROMPT_FILE}")
-    with open(FIRST_TURN_PROMPT_FILE, "r", encoding="utf-8") as f:
+    # ✅ 1) 레포 파일 기준 절대경로 우선
+    cand = [
+        os.path.join(REPO_DIR, FIRST_TURN_PROMPT_FILE),
+        os.path.join(os.getcwd(), FIRST_TURN_PROMPT_FILE),
+    ]
+
+    prompt_path = next((p for p in cand if os.path.isfile(p)), None)
+    if not prompt_path:
+        raise RuntimeError(f"프롬프트 파일을 찾을 수 없습니다: {FIRST_TURN_PROMPT_FILE} / tried={cand}")
+
+    with open(prompt_path, "r", encoding="utf-8") as f:
         txt = f.read().strip()
+
     if not txt:
-        raise RuntimeError(f"프롬프트 파일이 비어있습니다: {FIRST_TURN_PROMPT_FILE}")
+        raise RuntimeError(f"프롬프트 파일이 비어있습니다: {prompt_path}")
     return txt
 
 
