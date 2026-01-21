@@ -50,6 +50,7 @@ REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 
 from pathlib import Path
 
+@lru_cache(maxsize=4)
 def load_first_turn_system_prompt() -> str:
     # 1) 영어 파일명으로 바꿨으면 여기만 같이 바꿔
     # FIRST_TURN_PROMPT_FILE = "first_turn_prompt.md"  # <- (상수는 원래 위치에)
@@ -1410,14 +1411,25 @@ def require_auth():
 
 # region [Helper Classes]
 class RotatingKeys:
-    def __init__(self, keys, state_key: str, on_rotate=None):
+    def __init__(self, keys, state_key: str, use_session_state: bool = True, on_rotate=None):
         self.keys = [k.strip() for k in (keys or []) if isinstance(k, str) and k.strip()][:10]
         self.state_key = state_key
+        self.use_session_state = bool(use_session_state)
         self.on_rotate = on_rotate
 
-        idx = st.session_state.get(state_key, 0)
+        # NOTE:
+        # - 메인 스레드(Streamlit)는 st.session_state를 써도 되지만,
+        # - ThreadPoolExecutor 워커 스레드에서는 st.session_state 접근이 불안정할 수 있음.
+        #   (또한 build() 남발 시 소켓/FD가 쌓여 "Too many open files"가 나올 수 있음)
+        if self.use_session_state:
+            idx = st.session_state.get(state_key, 0)
+        else:
+            idx = 0
+
         self.idx = 0 if not self.keys else (idx % len(self.keys))
-        st.session_state[state_key] = self.idx
+
+        if self.use_session_state:
+            st.session_state[state_key] = self.idx
 
     def current(self):
         return self.keys[self.idx % len(self.keys)] if self.keys else None
@@ -1426,13 +1438,15 @@ class RotatingKeys:
         if not self.keys:
             return
         self.idx = (self.idx + 1) % len(self.keys)
-        st.session_state[self.state_key] = self.idx
+        if self.use_session_state:
+            st.session_state[self.state_key] = self.idx
         if callable(self.on_rotate):
             self.on_rotate(self.idx, self.current())
 
+
 class RotatingYouTube:
-    def __init__(self, keys, state_key="yt_key_idx"):
-        self.rot = RotatingKeys(keys, state_key)
+    def __init__(self, keys, state_key="yt_key_idx", use_session_state: bool = True):
+        self.rot = RotatingKeys(keys, state_key, use_session_state=use_session_state)
         self.service = None
         self._build()
 
@@ -1440,29 +1454,67 @@ class RotatingYouTube:
         key = self.rot.current()
         if not key:
             raise RuntimeError("YouTube API Key가 비어 있습니다.")
-        self.service = build("youtube", "v3", developerKey=key)
+        # IMPORTANT:
+        # build()를 반복 호출하면(특히 멀티스레드에서 video마다 새 인스턴스 생성 시)
+        # 내부 HTTP/소켓/캐시 FD가 누적되어 [Errno 24] Too many open files로 터질 수 있음.
+        # - cache_discovery=False : 디스커버리 캐시 파일 사용 방지(불필요한 FD/락 감소)
+        self.service = build("youtube", "v3", developerKey=key, cache_discovery=False)
 
-    def execute(self, factory):
-        max_retries = len(self.rot.keys)
+    def execute(self, factory, max_rotate: int | None = None):
+        if not callable(factory):
+            raise ValueError("factory must be callable")
+        max_retries = max_rotate if isinstance(max_rotate, int) and max_rotate > 0 else len(self.rot.keys)
+        max_retries = max(max_retries, 1)
+
         last_error = None
-
-        for _ in range(max_retries + 1):
+        for _ in range(max_retries):
             try:
                 return factory(self.service).execute()
             except HttpError as e:
                 last_error = e
-                status = getattr(getattr(e, 'resp', None), 'status', None)
-                msg = (getattr(e, 'content', b'').decode('utf-8', 'ignore') or '').lower()
-                
-                if status in (403, 429) and any(t in msg for t in ["quota", "rate", "limit"]):
-                    print(f"⚠️ [YouTube API] 키 만료/제한 감지. 다음 키로 교체 시도... (Current: {self.rot.idx})")
-                    self.rot.rotate() 
-                    self._build()    
-                    continue        
-                
-                raise e
-        
-        raise last_error
+                status = getattr(getattr(e, "resp", None), "status", None)
+                content = getattr(e, "content", b"") or b""
+                try:
+                    msg = content.decode("utf-8", "ignore").lower()
+                except Exception:
+                    msg = str(content).lower()
+
+                # 쿼터/레이트 제한이면 키 회전
+                if status in (403, 429) and any(t in msg for t in ("quota", "rate", "limit", "exceeded")):
+                    print(f"⚠️ [YouTube API] 키 제한 감지 → 키 교체 (Current idx: {self.rot.idx})")
+                    self.rot.rotate()
+                    self._build()
+                    continue
+
+                raise
+
+        if last_error:
+            raise last_error
+        raise RuntimeError("YouTube API request failed with unknown reason.")
+
+
+# ---- YouTube client getters (session/thread safe) ----
+_YT_THREAD_LOCAL = threading.local()
+
+def get_thread_youtube_client(keys):
+    """ThreadPoolExecutor 워커 스레드에서 재사용할 YouTube client(=RotatingYouTube).
+    - 워커 스레드마다 1개만 생성해서 build() 남발을 막음 → FD/소켓 누수 방지
+    - st.session_state 접근 금지(use_session_state=False)
+    """
+    key_tuple = tuple(keys or [])
+    rt = getattr(_YT_THREAD_LOCAL, "rt", None)
+    if rt is None or getattr(_YT_THREAD_LOCAL, "key_tuple", None) != key_tuple:
+        _YT_THREAD_LOCAL.key_tuple = key_tuple
+        _YT_THREAD_LOCAL.rt = RotatingYouTube(list(key_tuple), state_key="yt_key_idx_thread", use_session_state=False)
+    return _YT_THREAD_LOCAL.rt
+
+def get_session_youtube_client(keys):
+    """Streamlit 세션(메인 스레드)에서 재사용할 YouTube client."""
+    key_tuple = tuple(keys or [])
+    if ("yt_rt_session" not in st.session_state) or (st.session_state.get("yt_rt_session_keys") != key_tuple):
+        st.session_state["yt_rt_session_keys"] = key_tuple
+        st.session_state["yt_rt_session"] = RotatingYouTube(list(key_tuple), state_key="yt_key_idx", use_session_state=True)
+    return st.session_state["yt_rt_session"]
 # endregion
 
 
@@ -2135,8 +2187,10 @@ def yt_all_replies(rt, parent_id, video_id, title="", short_type="Clip", cap=Non
         time.sleep(0.2)
     return replies[:cap] if cap is not None else replies
 
-def yt_all_comments_sync(rt, video_id, title="", short_type="Clip",
+def yt_all_comments_sync(rt_keys, video_id, title="", short_type="Clip",
                          include_replies=True, max_per_video=None):
+    # 워커 스레드에서 YouTube client를 1개만 재사용 (build() 남발 방지)
+    rt = get_thread_youtube_client(rt_keys)
     rows, token = [], None
     while not (max_per_video is not None and len(rows) >= max_per_video):
         try:
@@ -2167,7 +2221,7 @@ def parallel_collect_comments_streaming(video_list, rt_keys, include_replies,
 
     with ThreadPoolExecutor(max_workers=8) as ex:
         futures = {
-            ex.submit(yt_all_comments_sync, RotatingYouTube(rt_keys), v["video_id"], v.get("title", ""),
+            ex.submit(yt_all_comments_sync, rt_keys, v["video_id"], v.get("title", ""),
                       v.get("shortType", "Clip"), include_replies, max_per_video): v for v in video_list
         }
         for f in as_completed(futures):
@@ -2346,7 +2400,7 @@ def run_pipeline_first_turn(user_query: str, extra_video_ids=None, only_these_vi
     prog_bar.progress(0.10, text="영상 수집중…")
     if not YT_API_KEYS: return "오류: YouTube API Key가 설정되지 않았습니다."
     
-    rt = RotatingYouTube(YT_API_KEYS)
+    rt = get_session_youtube_client(YT_API_KEYS)
     start_dt, end_dt = datetime.fromisoformat(schema["start_iso"]), datetime.fromisoformat(schema["end_iso"])
     kw_main = schema.get("keywords", [])
 
