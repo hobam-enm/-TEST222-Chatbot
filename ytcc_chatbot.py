@@ -48,22 +48,45 @@ GITHUB_BRANCH = st.secrets.get("GITHUB_BRANCH", "main")
 FIRST_TURN_PROMPT_FILE = "1차 질문 프롬프트.md"
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 
+from pathlib import Path
+
 def load_first_turn_system_prompt() -> str:
-    # ✅ 1) 레포 파일 기준 절대경로 우선
+    # 1) 영어 파일명으로 바꿨으면 여기만 같이 바꿔
+    # FIRST_TURN_PROMPT_FILE = "first_turn_prompt.md"  # <- (상수는 원래 위치에)
+
+    repo_dir = Path(__file__).resolve().parent
     cand = [
-        os.path.join(REPO_DIR, FIRST_TURN_PROMPT_FILE),
-        os.path.join(os.getcwd(), FIRST_TURN_PROMPT_FILE),
+        repo_dir / FIRST_TURN_PROMPT_FILE,
+        Path.cwd() / FIRST_TURN_PROMPT_FILE,
     ]
 
-    prompt_path = next((p for p in cand if os.path.isfile(p)), None)
-    if not prompt_path:
-        raise RuntimeError(f"프롬프트 파일을 찾을 수 없습니다: {FIRST_TURN_PROMPT_FILE} / tried={cand}")
+    prompt_path = next((p for p in cand if p.is_file()), None)
+    if prompt_path is None:
+        st.error(f"❌ 프롬프트 파일을 못 찾음: {FIRST_TURN_PROMPT_FILE}")
+        st.write("tried:", [str(p) for p in cand])
+        st.write("cwd:", str(Path.cwd()))
+        st.write("repo_dir:", str(repo_dir))
+        st.stop()
 
-    with open(prompt_path, "r", encoding="utf-8") as f:
-        txt = f.read().strip()
+    # 2) 여기서 open이 실패하는 “진짜 이유”를 그대로 출력 (redacted 회피)
+    try:
+        with open(prompt_path, "r", encoding="utf-8") as f:
+            txt = f.read().strip()
+    except Exception as e:
+        st.error("❌ 프롬프트 파일 open 실패")
+        st.write("path:", str(prompt_path))
+        st.write("type:", type(e).__name__)
+        st.write("error:", str(e))
+        try:
+            st.write("stat:", os.stat(prompt_path))
+        except Exception as e2:
+            st.write("stat_failed:", f"{type(e2).__name__}: {e2}")
+        st.stop()
 
     if not txt:
-        raise RuntimeError(f"프롬프트 파일이 비어있습니다: {prompt_path}")
+        st.error(f"❌ 프롬프트 파일이 비어있음: {prompt_path}")
+        st.stop()
+
     return txt
 
 
